@@ -1,12 +1,28 @@
-// Package adapters — Salesforce REST adapter with Supabase fallback engine.
+// Package adapters — Salesforce REST API adapter with OAuth2 ROPC token flow
+// and Supabase cache fallback (System Resilience Matrix — Scenario A).
 //
-// System Resilience Matrix — Scenario A implementation:
-//   - Primary path: Calls Salesforce REST API with a context deadline derived
-//     from GO_REQUEST_TIMEOUT_MS.
-//   - On timeout or 5xx: Sets ErrSalesforceUnavailable.
-//   - Fallback path: If SUPABASE_ENABLED=true, queries the Supabase cache via
-//     the AccountCache interface. On cache hit, returns Account with Source="cache".
-//   - On cache miss: Returns ErrSalesforceUnavailable to caller.
+// # Authentication
+//
+// This adapter uses the OAuth2 Resource Owner Password Credentials (ROPC) flow:
+//
+//  1. POST to <SF_LOGIN_URL>/services/oauth2/token with grant_type=password
+//     and the Connected App credentials + username/password.
+//  2. Receive a short-lived access_token and instance_url.
+//  3. Use the access_token as a Bearer token for all subsequent API calls.
+//
+// The token is refreshed lazily on every GetAccount call (Salesforce tokens
+// are valid for 2 hours by default; for a low-traffic dev hub this is fine).
+// A production system would cache and proactively refresh the token.
+//
+// # Resilience
+//
+// Resolution order for GetAccount:
+//  1. If SF_USE_MOCK=true  → return nil (no fixtures).
+//  2. Obtain OAuth2 bearer token.
+//  3. Call Salesforce REST API with a context deadline.
+//  4. On timeout or 5xx  → attempt Supabase cache lookup (if enabled).
+//  5. On cache hit       → return Account with Source="cache".
+//  6. On cache miss      → return ErrSalesforceUnavailable.
 package adapters
 
 import (
@@ -16,7 +32,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
@@ -28,12 +46,21 @@ import (
 // The JSON-RPC handler maps this to error code -32002.
 var ErrSalesforceUnavailable = errors.New("salesforce unreachable")
 
-// SalesforceAdapter wraps the Salesforce REST API (or its mock) with a
-// Supabase cache fallback for the Scenario A resilience path.
+// ---------------------------------------------------------------------------
+// Adapter
+// ---------------------------------------------------------------------------
+
+// SalesforceAdapter wraps the Salesforce REST API with an OAuth2 token cache
+// and a Supabase fallback for the Scenario A resilience path.
 type SalesforceAdapter struct {
 	cfg    config.Config
 	client *http.Client
 	cache  cache.AccountCache
+
+	// token guards the cached OAuth2 bearer token (lazy refresh per call).
+	mu          sync.Mutex
+	accessToken string
+	instanceURL string
 }
 
 // NewSalesforceAdapter creates a new SalesforceAdapter.
@@ -47,42 +74,35 @@ func NewSalesforceAdapter(cfg config.Config, accountCache cache.AccountCache) *S
 	}
 }
 
-// Ping checks Salesforce connectivity. In mock mode it always returns nil.
-func (a *SalesforceAdapter) Ping(_ context.Context) error {
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+// Ping checks Salesforce connectivity.
+// In mock mode it always returns nil.
+// In live mode it obtains (or reuses) an OAuth token; a successful token
+// exchange is treated as a connectivity confirmation.
+func (a *SalesforceAdapter) Ping(ctx context.Context) error {
 	if a.cfg.SfUseMock {
 		return nil
 	}
-	req, err := http.NewRequest(http.MethodGet, a.cfg.SfBaseURL+"/services/data/v59.0/", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+a.cfg.SfAPIToken)
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("salesforce ping: HTTP %d", resp.StatusCode)
-	}
-	return nil
+	_, _, err := a.ensureToken(ctx)
+	return err
 }
 
-// GetAccount fetches a Salesforce Account by ID.
+// GetAccount fetches a Salesforce Account by its 15/18-character Record ID.
 //
 // Resolution order:
-//  1. If SF_USE_MOCK=true → return mock fixture data.
-//  2. Call Salesforce REST API with context deadline.
-//  3. On error (timeout / 5xx) → attempt Supabase cache lookup.
-//  4. On cache hit → return Account with Source="cache".
-//  5. On cache miss → return ErrSalesforceUnavailable.
+//  1. If SF_USE_MOCK=true  → return nil account (no fixture data).
+//  2. Obtain OAuth2 bearer token.
+//  3. Call Salesforce REST API.
+//  4. On failure          → attempt Supabase cache lookup.
+//  5. On cache hit        → return Account with Source="cache".
+//  6. On cache miss       → return ErrSalesforceUnavailable.
 func (a *SalesforceAdapter) GetAccount(ctx context.Context, accountID string) (*domain.Account, error) {
 	if a.cfg.SfUseMock {
-		acc := a.mockAccount(accountID)
-		if acc == nil {
-			return nil, fmt.Errorf("mock: account %q not found", accountID)
-		}
-		return acc, nil
+		// Mock mode: no fixture data. Return nil so callers degrade gracefully.
+		return nil, fmt.Errorf("mock: account lookup disabled in live-migration mode")
 	}
 
 	// -- Live Salesforce call --
@@ -98,7 +118,7 @@ func (a *SalesforceAdapter) GetAccount(ctx context.Context, accountID string) (*
 
 	cached, cacheErr := a.cache.GetAccount(ctx, accountID)
 	if cacheErr != nil {
-		// Cache miss or disabled — surface the original Salesforce error.
+		// Cache miss or disabled — surface unavailable.
 		return nil, ErrSalesforceUnavailable
 	}
 
@@ -107,83 +127,143 @@ func (a *SalesforceAdapter) GetAccount(ctx context.Context, accountID string) (*
 }
 
 // ---------------------------------------------------------------------------
-// Mock implementation (static fixture data)
+// OAuth2 ROPC token flow
 // ---------------------------------------------------------------------------
 
-func (a *SalesforceAdapter) mockAccount(accountID string) *domain.Account {
-	fixtures := map[string]*domain.Account{
-		"001ACME000000001": {ID: "001ACME000000001", Name: "ACME Corporation", Tier: "Enterprise", MRRCents: 625000, HealthScore: 87.5, Owner: "Jane Smith", Industry: "Manufacturing", Source: "live"},
-		"001BETA000000002": {ID: "001BETA000000002", Name: "Beta Technologies Inc.", Tier: "Mid-Market", MRRCents: 145000, HealthScore: 72.0, Owner: "Bob Johnson", Industry: "Software", Source: "live"},
-		"001GAMA000000003": {ID: "001GAMA000000003", Name: "Gamma Retail Group", Tier: "SMB", MRRCents: 42000, HealthScore: 55.3, Owner: "Carol Williams", Industry: "Retail", Source: "live"},
-		"001DELT000000004": {ID: "001DELT000000004", Name: "Delta Financial Services", Tier: "Enterprise", MRRCents: 1200000, HealthScore: 94.1, Owner: "Alice Chen", Industry: "Financial Services", Source: "live"},
-		"001EPSI000000005": {ID: "001EPSI000000005", Name: "Epsilon Healthcare", Tier: "Mid-Market", MRRCents: 380000, HealthScore: 68.7, Owner: "David Lee", Industry: "Healthcare", Source: "live"},
+// sfTokenResponse is the JSON response from the Salesforce OAuth2 token endpoint.
+type sfTokenResponse struct {
+	AccessToken string `json:"access_token"`
+	InstanceURL string `json:"instance_url"`
+	TokenType   string `json:"token_type"`
+	Error       string `json:"error"`
+	ErrorDesc   string `json:"error_description"`
+}
+
+// ensureToken lazily fetches a fresh OAuth2 bearer token using the Resource
+// Owner Password Credentials flow. The token is NOT cached between calls —
+// for a production system you would store it with an expiry check.
+// Returns (accessToken, instanceURL, error).
+func (a *SalesforceAdapter) ensureToken(ctx context.Context) (string, string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	// For simplicity in this implementation we always fetch a fresh token.
+	// A production upgrade would check token expiry and skip the roundtrip.
+	tokenURL := strings.TrimRight(a.cfg.SfLoginURL, "/") + "/services/oauth2/token"
+
+	body := url.Values{}
+	body.Set("grant_type", "password")
+	body.Set("client_id", a.cfg.SfClientID)
+	body.Set("client_secret", a.cfg.SfClientSecret)
+	body.Set("username", a.cfg.SfUsername)
+	body.Set("password", a.cfg.SfPassword) // password + security token concatenated
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL,
+		strings.NewReader(body.Encode()))
+	if err != nil {
+		return "", "", fmt.Errorf("salesforce: build token request: %w", err)
 	}
-	return fixtures[accountID]
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("salesforce: token request HTTP: %w", err)
+	}
+	defer resp.Body.Close()
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("salesforce: read token response: %w", err)
+	}
+
+	var tok sfTokenResponse
+	if err := json.Unmarshal(rawBody, &tok); err != nil {
+		return "", "", fmt.Errorf("salesforce: unmarshal token response: %w", err)
+	}
+
+	if tok.Error != "" {
+		return "", "", fmt.Errorf("salesforce OAuth2 error: %s — %s", tok.Error, tok.ErrorDesc)
+	}
+
+	if resp.StatusCode >= 400 {
+		return "", "", fmt.Errorf("salesforce: token HTTP %d", resp.StatusCode)
+	}
+
+	a.accessToken = tok.AccessToken
+	a.instanceURL = tok.InstanceURL
+	return a.accessToken, a.instanceURL, nil
 }
 
 // ---------------------------------------------------------------------------
 // Live Salesforce REST implementation
 // ---------------------------------------------------------------------------
 
-// sfAccountResponse is a minimal mapping of the Salesforce Account sobject.
+// sfAccountResponse is a minimal mapping of the Salesforce Account sObject.
 type sfAccountResponse struct {
-	ID             string      `json:"Id"`
-	Name           string      `json:"Name"`
-	Type           string      `json:"Type"`
-	AnnualRevenue  json.Number `json:"AnnualRevenue"`
-	Industry       string      `json:"Industry"`
-	OwnerId        string      `json:"OwnerId"`
-	AccountHealth  json.Number `json:"Account_Health_Score__c"`
+	ID            string      `json:"Id"`
+	Name          string      `json:"Name"`
+	Type          string      `json:"Type"`
+	AnnualRevenue json.Number `json:"AnnualRevenue"`
+	Industry      string      `json:"Industry"`
+	OwnerID       string      `json:"OwnerId"`
+	HealthScore   json.Number `json:"Account_Health_Score__c"`
 }
 
 func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string) (*domain.Account, error) {
+	accessToken, instanceURL, err := a.ensureToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: token acquisition failed: %w", err)
+	}
+
 	fields := "Id,Name,Type,AnnualRevenue,Industry,OwnerId,Account_Health_Score__c"
 	endpoint := fmt.Sprintf(
-		"%s/services/data/v59.0/sobjects/Account/%s?fields=%s",
-		strings.TrimRight(a.cfg.SfBaseURL, "/"),
+		"%s/services/data/%s/sobjects/Account/%s?fields=%s",
+		strings.TrimRight(instanceURL, "/"),
+		a.cfg.SfAPIVersion,
 		accountID,
 		fields,
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("salesforce request build: %w", err)
+		return nil, fmt.Errorf("salesforce: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+a.cfg.SfAPIToken)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := a.client.Do(req)
 	if err != nil {
 		// Network timeout or connection refused — trigger fallback.
-		return nil, fmt.Errorf("salesforce HTTP request: %w", err)
+		return nil, fmt.Errorf("salesforce: HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("salesforce response read: %w", err)
+		return nil, fmt.Errorf("salesforce: read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
 		// 4xx / 5xx — trigger fallback.
-		return nil, fmt.Errorf("salesforce API error: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("salesforce: API error HTTP %d — %s", resp.StatusCode, string(body))
 	}
 
 	var sfResp sfAccountResponse
 	if err := json.Unmarshal(body, &sfResp); err != nil {
-		return nil, fmt.Errorf("salesforce response unmarshal: %w", err)
+		return nil, fmt.Errorf("salesforce: unmarshal response: %w", err)
 	}
 
-	healthScore, _ := sfResp.AccountHealth.Float64()
+	healthScore, _ := sfResp.HealthScore.Float64()
 	revenue, _ := sfResp.AnnualRevenue.Int64()
 
 	return &domain.Account{
 		ID:          sfResp.ID,
 		Name:        sfResp.Name,
 		Tier:        sfResp.Type,
-		MRRCents:    revenue / 12, // rough monthly approximation
+		MRRCents:    revenue / 12, // rough monthly approximation from annual revenue
 		HealthScore: healthScore,
-		Owner:       sfResp.OwnerId,
+		Owner:       sfResp.OwnerID,
 		Industry:    sfResp.Industry,
 		Source:      "live",
 	}, nil

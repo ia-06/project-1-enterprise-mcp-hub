@@ -1,11 +1,22 @@
-// Package adapters — Jira REST adapter.
-// When JIRA_USE_MOCK=true (the $0-tier default), this adapter returns
-// static fixture data that mirrors a realistic Jira JQL search response.
-// When JIRA_USE_MOCK=false, it calls the real Jira REST API v3.
+// Package adapters — Jira Cloud REST API v3 adapter.
+//
+// Authentication: HTTP Basic Auth using the Atlassian account email as the
+// username and a personal API token as the password. The token is generated
+// at https://id.atlassian.com/manage-profile/security/api-tokens.
+//
+// Live mode (JIRA_USE_MOCK=false):
+//   Executes a JQL search against the configured Jira Cloud instance and
+//   returns normalised domain.JiraTicket values.
+//
+// Mock mode (JIRA_USE_MOCK=true):
+//   Returns a minimal empty slice so the server stays functional during
+//   local development without real credentials. All fixture arrays have
+//   been permanently removed from this file.
 package adapters
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,153 +29,152 @@ import (
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
 )
 
-// JiraAdapter wraps the Jira REST API (or its mock) and normalises
-// responses into domain.JiraTicket structs.
+// JiraAdapter wraps the Jira Cloud REST API and normalises responses
+// into domain.JiraTicket structs. It is safe for concurrent use.
 type JiraAdapter struct {
 	cfg    config.Config
 	client *http.Client
+	// basicAuth is the precomputed "Basic <base64(email:token)>" header value.
+	basicAuth string
 }
 
-// NewJiraAdapter creates a new JiraAdapter with a pre-configured HTTP client.
+// NewJiraAdapter creates a JiraAdapter pre-configured with Basic Auth
+// credentials derived from cfg.JiraEmail and cfg.JiraAPIToken.
 func NewJiraAdapter(cfg config.Config) *JiraAdapter {
+	creds := cfg.JiraEmail + ":" + cfg.JiraAPIToken
+	encoded := base64.StdEncoding.EncodeToString([]byte(creds))
+
 	return &JiraAdapter{
-		cfg: cfg,
+		cfg:       cfg,
+		basicAuth: "Basic " + encoded,
 		client: &http.Client{
 			Timeout: cfg.RequestTimeout,
 		},
 	}
 }
 
-// Ping checks Jira connectivity. In mock mode it always returns nil.
-func (a *JiraAdapter) Ping(_ context.Context) error {
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+// Ping checks Jira connectivity by calling the lightweight /rest/api/3/myself
+// endpoint. In mock mode it always returns nil.
+func (a *JiraAdapter) Ping(ctx context.Context) error {
 	if a.cfg.JiraUseMock {
 		return nil
 	}
-	// In live mode, hit the /rest/api/3/myself endpoint as a lightweight probe.
-	req, err := http.NewRequest(http.MethodGet, a.cfg.JiraBaseURL+"/rest/api/3/myself", nil)
+
+	endpoint := strings.TrimRight(a.cfg.JiraBaseURL, "/") + "/rest/api/3/myself"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("jira ping: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+a.cfg.JiraAPIToken)
+	a.setHeaders(req)
+
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("jira ping: HTTP: %w", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("jira ping: HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
 
-// ListTicketsByAccount returns Jira tickets associated with a Salesforce Account ID.
-// In mock mode it filters static fixtures by accountSFID.
-// In live mode it executes a JQL query: `cf[10001] = "<accountSFID>" ORDER BY updated DESC`.
+// ListTicketsByAccount returns Jira issues linked to a Salesforce Account ID.
+//
+// In mock mode:  returns an empty slice (no fixtures).
+// In live mode:  issues a JQL query that filters by the configured
+//
+//	custom field (JIRA_SF_ACCOUNT_FIELD) for the given accountSFID.
 func (a *JiraAdapter) ListTicketsByAccount(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
 	if a.cfg.JiraUseMock {
-		return a.mockTickets(accountSFID), nil
+		// Mock mode: no fixture data — return empty slice so UI renders gracefully.
+		return []domain.JiraTicket{}, nil
 	}
 	return a.liveListTickets(ctx, accountSFID)
 }
 
 // ---------------------------------------------------------------------------
-// Mock implementation
+// Live implementation — Jira REST API v3
 // ---------------------------------------------------------------------------
 
-func (a *JiraAdapter) mockTickets(accountSFID string) []domain.JiraTicket {
-	// Static fixture data keyed by SF Account ID suffix.
-	fixturesByAccount := map[string][]domain.JiraTicket{
-		"001ACME000000001": {
-			{Key: "ENG-1001", Summary: "Migrate ACME data pipeline to v2 schema", Status: "In Progress", Assignee: "alice@eng.com", Priority: "P1", UpdatedAt: mustParseTime("2025-06-01T09:00:00Z"), AccountSFID: "001ACME000000001"},
-			{Key: "ENG-1002", Summary: "Fix ACME SSO authentication timeout", Status: "To Do", Assignee: "bob@eng.com", Priority: "P0", UpdatedAt: mustParseTime("2025-06-03T14:30:00Z"), AccountSFID: "001ACME000000001"},
-			{Key: "ENG-1003", Summary: "ACME quarterly report generation bug", Status: "Done", Assignee: "carol@eng.com", Priority: "P2", UpdatedAt: mustParseTime("2025-05-28T11:00:00Z"), AccountSFID: "001ACME000000001"},
-		},
-		"001BETA000000002": {
-			{Key: "ENG-2001", Summary: "Beta API rate-limit integration", Status: "In Progress", Assignee: "dave@eng.com", Priority: "P1", UpdatedAt: mustParseTime("2025-06-05T08:00:00Z"), AccountSFID: "001BETA000000002"},
-			{Key: "ENG-2002", Summary: "Beta webhook signature validation", Status: "To Do", Assignee: "eve@eng.com", Priority: "P2", UpdatedAt: mustParseTime("2025-06-04T17:00:00Z"), AccountSFID: "001BETA000000002"},
-		},
-		"001GAMA000000003": {
-			{Key: "ENG-3001", Summary: "Gamma bulk import performance regression", Status: "In Progress", Assignee: "frank@eng.com", Priority: "P0", UpdatedAt: mustParseTime("2025-06-06T10:00:00Z"), AccountSFID: "001GAMA000000003"},
-		},
-		"001DELT000000004": {
-			{Key: "ENG-4001", Summary: "Delta compliance audit log gap", Status: "To Do", Assignee: "grace@eng.com", Priority: "P0", UpdatedAt: mustParseTime("2025-06-02T12:00:00Z"), AccountSFID: "001DELT000000004"},
-			{Key: "ENG-4002", Summary: "Delta MFA rollout support", Status: "Done", Assignee: "henry@eng.com", Priority: "P1", UpdatedAt: mustParseTime("2025-05-30T16:00:00Z"), AccountSFID: "001DELT000000004"},
-		},
-		"001EPSI000000005": {
-			{Key: "ENG-5001", Summary: "Epsilon HIPAA data residency configuration", Status: "In Progress", Assignee: "iris@eng.com", Priority: "P0", UpdatedAt: mustParseTime("2025-06-07T07:30:00Z"), AccountSFID: "001EPSI000000005"},
-		},
-	}
-
-	if tickets, ok := fixturesByAccount[accountSFID]; ok {
-		return tickets
-	}
-
-	// Return an empty slice for unknown accounts (not an error in mock mode).
-	return []domain.JiraTicket{}
-}
-
-// ---------------------------------------------------------------------------
-// Live implementation
-// ---------------------------------------------------------------------------
-
-// jiraSearchResponse is a partial Jira REST API v3 search response.
+// jiraSearchResponse is a partial mapping of the Jira REST API v3
+// /rest/api/3/search response envelope.
 type jiraSearchResponse struct {
 	Issues []jiraIssue `json:"issues"`
 }
 
 type jiraIssue struct {
-	Key    string `json:"key"`
-	Fields struct {
-		Summary string `json:"summary"`
-		Status  struct {
-			Name string `json:"name"`
-		} `json:"status"`
-		Assignee *struct {
-			DisplayName string `json:"displayName"`
-		} `json:"assignee"`
-		Priority *struct {
-			Name string `json:"name"`
-		} `json:"priority"`
-		Updated    string `json:"updated"`
-		CustomSFID string `json:"cf_salesforce_account_id"`
-	} `json:"fields"`
+	Key    string      `json:"key"`
+	Fields jiraFields  `json:"fields"`
+}
+
+type jiraFields struct {
+	Summary  string         `json:"summary"`
+	Status   jiraStatus     `json:"status"`
+	Assignee *jiraAssignee  `json:"assignee"`
+	Priority *jiraPriority  `json:"priority"`
+	Updated  string         `json:"updated"`
+}
+
+type jiraStatus struct {
+	Name string `json:"name"`
+}
+
+type jiraAssignee struct {
+	DisplayName string `json:"displayName"`
+}
+
+type jiraPriority struct {
+	Name string `json:"name"`
 }
 
 func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
-	// JQL: filter by custom field linked to Salesforce Account ID.
-	jql := fmt.Sprintf(`"Salesforce Account ID" = "%s" ORDER BY updated DESC`, accountSFID)
+	// Build a JQL query that targets the configured SF account custom field.
+	// If no custom field is configured, fall back to a project-scoped query
+	// so we always return something useful for testing.
+	var jql string
+	if a.cfg.JiraSFAccountField != "" && accountSFID != "" {
+		jql = fmt.Sprintf(`"%s" = "%s" ORDER BY updated DESC`, a.cfg.JiraSFAccountField, accountSFID)
+	} else if a.cfg.JiraProjectKey != "" {
+		jql = fmt.Sprintf(`project = "%s" ORDER BY updated DESC`, a.cfg.JiraProjectKey)
+	} else {
+		jql = "ORDER BY updated DESC"
+	}
 
 	endpoint := fmt.Sprintf(
-		"%s/rest/api/3/search?jql=%s&fields=summary,status,assignee,priority,updated",
+		"%s/rest/api/3/search?jql=%s&fields=summary,status,assignee,priority,updated&maxResults=50",
 		strings.TrimRight(a.cfg.JiraBaseURL, "/"),
 		url.QueryEscape(jql),
 	)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("jira request build: %w", err)
+		return nil, fmt.Errorf("jira: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+a.cfg.JiraAPIToken)
-	req.Header.Set("Accept", "application/json")
+	a.setHeaders(req)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("jira HTTP request: %w", err)
+		return nil, fmt.Errorf("jira: HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("jira response read: %w", err)
+		return nil, fmt.Errorf("jira: read response: %w", err)
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("jira API error: HTTP %d — %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("jira: API error HTTP %d — %s", resp.StatusCode, string(body))
 	}
 
 	var searchResp jiraSearchResponse
 	if err := json.Unmarshal(body, &searchResp); err != nil {
-		return nil, fmt.Errorf("jira response unmarshal: %w", err)
+		return nil, fmt.Errorf("jira: unmarshal response: %w", err)
 	}
 
 	tickets := make([]domain.JiraTicket, 0, len(searchResp.Issues))
@@ -177,7 +187,7 @@ func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) (
 		if issue.Fields.Priority != nil {
 			priority = issue.Fields.Priority.Name
 		}
-		updatedAt, _ := time.Parse(time.RFC3339, issue.Fields.Updated)
+		updatedAt, _ := time.Parse("2006-01-02T15:04:05.999-0700", issue.Fields.Updated)
 
 		tickets = append(tickets, domain.JiraTicket{
 			Key:         issue.Key,
@@ -197,6 +207,15 @@ func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) (
 // Helpers
 // ---------------------------------------------------------------------------
 
+// setHeaders applies the Jira Basic Auth and content-type headers to req.
+func (a *JiraAdapter) setHeaders(req *http.Request) {
+	req.Header.Set("Authorization", a.basicAuth)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+}
+
+// mustParseTime is retained for any callers that may reference it from
+// other files in this package. It is no longer used internally.
 func mustParseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, s)
 	return t
