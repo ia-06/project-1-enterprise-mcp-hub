@@ -37,8 +37,8 @@ type JiraAdapter struct {
 
 	// fieldKey holds the resolved Jira internal key for the SF Account field.
 	// It is populated lazily on the first live API call and then reused.
-	fieldKeyMu  sync.RWMutex
-	fieldKey    string // e.g. "customfield_10057"
+	fieldKeyMu    sync.RWMutex
+	fieldKey      string // e.g. "customfield_10057"
 	fieldResolved bool
 }
 
@@ -91,19 +91,20 @@ func (a *JiraAdapter) Ping(ctx context.Context) error {
 //
 // In mock mode:  returns an empty slice.
 // In live mode:  dynamically resolves the custom field key for the configured
-//		  field name, then executes a JQL search against Jira Cloud.
+//
+//	field name, then executes a JQL search against Jira Cloud.
 //
 // Fallback strategy for templated/sample Jira projects:
-//   If the SF-account-specific JQL returns 0 results (because the custom field
-//   is not populated on sample issues), the adapter automatically retries with
-//   a project-scoped query and tags all returned tickets with the given
-//   accountSFID. This makes the dashboard usable with out-of-the-box Jira
-//   projects without needing to manually configure every issue.
+//
+//	If the SF-account-specific JQL returns 0 results (because the custom field
+//	is not populated on sample issues), the adapter automatically retries with
+//	a project-scoped query and tags all returned tickets with the given
+//	accountSFID. This makes the dashboard usable with out-of-the-box Jira
+//	projects without needing to manually configure every issue.
 func (a *JiraAdapter) ListTicketsByAccount(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
 	if a.cfg.JiraUseMock {
 		return []domain.JiraTicket{}, nil
 	}
-
 	return a.liveListTickets(ctx, accountSFID)
 }
 
@@ -327,4 +328,3 @@ func (a *JiraAdapter) setHeaders(req *http.Request) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 }
-

@@ -273,6 +273,11 @@ func (s *Server) SalesforceListAccounts(ctx context.Context, limit int) ([]domai
 	return s.sfAdp.ListAccounts(ctx, limit)
 }
 
+// SalesforceListAccounts delegates to the Salesforce adapter SOQL query.
+func (s *Server) SalesforceListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
+	return s.sfAdp.ListAccounts(ctx, limit)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
