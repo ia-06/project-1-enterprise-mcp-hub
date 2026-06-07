@@ -539,9 +539,9 @@ img, svg {
    ---------------------------------------------------------------- */
 .connect-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-md);
-  align-items: start;
+  align-items: stretch;
 }
 .connect-card {
   background: var(--canvas);
@@ -572,7 +572,10 @@ img, svg {
   color: var(--mute);
   margin-top: 1px;
 }
-.connect-step-body { flex: 1; }
+.connect-step-body {
+  flex: 1;
+  min-width: 0;
+}
 .connect-step-title {
   font-size: 13px;
   font-weight: 500;
@@ -591,14 +594,17 @@ img, svg {
   background: var(--ink);
   border-radius: var(--r-md);
   padding: var(--space-md);
-  overflow-x: auto;
+  overflow: hidden;
+  max-width: 100%;
 }
 .code-block pre {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 20px;
+  font-size: 11px;
+  line-height: 18px;
   color: rgba(255,255,255,0.85);
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
 }
 .code-block .code-key { color: #a5d6ff; }
 .code-block .code-val { color: #bcf0b0; }
@@ -609,7 +615,7 @@ img, svg {
    ---------------------------------------------------------------- */
 .mcp-step-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-md);
   margin-top: var(--space-3xl);
 }
@@ -645,12 +651,16 @@ img, svg {
   border-radius: var(--r-sm);
   padding: var(--space-sm) var(--space-md);
   margin-top: var(--space-sm);
+  overflow: hidden;
 }
 .mcp-code pre {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 20px;
+  font-size: 11px;
+  line-height: 18px;
   color: rgba(255,255,255,0.75);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
 }
 
 /* Methods table */

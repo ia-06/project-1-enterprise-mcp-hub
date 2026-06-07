@@ -4,7 +4,7 @@ import Nav from "./components/Nav";
 import Footer from "./components/Footer";
 
 export const metadata: Metadata = {
-  title: "Enterprise MCP Hub — Connect Your Data Stack.",
+  title: "Enterprise MCP Hub | Connect Your Data Stack.",
   description:
     "A production-grade Model Context Protocol server that wires Jira Cloud, Salesforce CRM, and Postgres into any AI agent workflow via JSON-RPC 2.0. Zero mock data. Live enterprise APIs.",
   keywords: ["MCP", "Model Context Protocol", "enterprise middleware", "Salesforce", "Jira", "Supabase", "AI agents", "JSON-RPC"],

@@ -31,12 +31,11 @@ const METHODS = [
   },
 ];
 
-const STEP_1 = `# 1. Start the MCP server
+const STEP_1 = `# Start the MCP server
 cd mcp-server
-go run ./cmd/server
-# > [fiber] listening on :8080`;
+go run ./cmd/server`;
 
-const STEP_2 = `// 2. Configure your agent's MCP endpoint
+const STEP_2 = `# Configure agent endpoint
 {
   "mcpServer": {
     "url": "http://localhost:8080/rpc",
@@ -44,21 +43,23 @@ const STEP_2 = `// 2. Configure your agent's MCP endpoint
   }
 }`;
 
-const STEP_3 = `// 3. Call any tool via JSON-RPC 2.0
+const STEP_3 = `# Call tool via JSON-RPC
 {
   "jsonrpc": "2.0",
   "method": "salesforce.getAccount",
-  "params": { "accountId": "001abc..." },
+  "params": {
+    "accountId": "001abc..."
+  },
   "id": "1"
 }
-// Response:
+
+# Response:
 {
   "jsonrpc": "2.0",
   "result": {
     "account": {
       "id": "001abc...",
       "name": "ACME Corp",
-      "industry": "Manufacturing",
       "source": "live"
     }
   },
