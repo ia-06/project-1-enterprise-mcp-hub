@@ -201,6 +201,8 @@ func handleSingleRPC(
 		result, rpcErr = handleJiraListTickets(ctx, mcpServer, req.Params)
 	case "salesforce.getAccount":
 		result, rpcErr = handleSalesforceGetAccount(ctx, mcpServer, req.Params)
+	case "salesforce.listAccounts":
+		result, rpcErr = handleSalesforceListAccounts(ctx, mcpServer, req.Params)
 	default:
 		rpcErr = &rpcError{
 			Code:    errCodeMethodNotFound,
@@ -278,7 +280,6 @@ func handleSalesforceGetAccount(ctx context.Context, s *internalmcp.Server, para
 	}
 	account, err := s.SalesforceGetAccount(ctx, p.AccountID)
 	if err != nil {
-		// Distinguish between Salesforce-specific errors and generic ones.
 		if err == adapters.ErrSalesforceUnavailable {
 			return nil, &rpcError{
 				Code:    errCodeSalesforceUnavailable,
@@ -289,6 +290,23 @@ func handleSalesforceGetAccount(ctx context.Context, s *internalmcp.Server, para
 		return nil, mapAdapterError(err, errCodeSalesforceUnavailable, "Salesforce data source unavailable")
 	}
 	return fiber.Map{"account": account}, nil
+}
+
+func handleSalesforceListAccounts(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		Limit int `json:"limit"`
+	}
+	// params is optional — if missing, use defaults
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params", Data: fiber.Map{"detail": err.Error()}}
+		}
+	}
+	accounts, err := s.SalesforceListAccounts(ctx, p.Limit)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeSalesforceUnavailable, "Salesforce data source unavailable")
+	}
+	return fiber.Map{"accounts": accounts}, nil
 }
 
 // ---------------------------------------------------------------------------

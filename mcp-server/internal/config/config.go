@@ -51,8 +51,8 @@ type Config struct {
 
 	// ---- Supabase cache (Salesforce Scenario-A fallback) --------------------
 	SupabaseURL            string
-	SupabaseAnonKey        string
-	SupabaseServiceRoleKey string
+	SupabasePublishableKey string // replaces legacy anon key (sb_publishable_...)
+	SupabaseSecretKey      string // replaces legacy service_role key (sb_secret_...)
 	SupabaseEnabled        bool
 }
 
@@ -61,9 +61,20 @@ type Config struct {
 // live credentials when mock mode is disabled; the server still starts
 // so that health routes remain reachable.
 func Load() Config {
-	// Best-effort .env load — production systems supply real env vars directly.
-	if err := godotenv.Load(); err != nil {
-		log.Println("[config] No .env file found; using system environment variables.")
+	// Best-effort .env load — searches the current directory and up to two
+	// parent directories so that `go run ./cmd/server` from within mcp-server/
+	// finds the .env that lives at the project root. Production systems supply
+	// real env vars directly and this lookup is a no-op.
+	loaded := false
+	for _, candidate := range []string{".env", "../.env", "../../.env"} {
+		if err := godotenv.Load(candidate); err == nil {
+			log.Printf("[config] Loaded environment from %s", candidate)
+			loaded = true
+			break
+		}
+	}
+	if !loaded {
+		log.Println("[config] No .env file found in current or parent directories; using system environment variables.")
 	}
 
 	timeoutMS := getInt("GO_REQUEST_TIMEOUT_MS", 8000)
@@ -97,8 +108,8 @@ func Load() Config {
 
 		// Supabase
 		SupabaseURL:            getStr("SUPABASE_URL", ""),
-		SupabaseAnonKey:        getStr("SUPABASE_ANON_KEY", ""),
-		SupabaseServiceRoleKey: getStr("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabasePublishableKey: getStr("SUPABASE_PUBLISHABLE_KEY", ""),
+		SupabaseSecretKey:      getStr("SUPABASE_SECRET_KEY", ""),
 		SupabaseEnabled:        getBool("SUPABASE_ENABLED", false),
 	}
 
@@ -121,8 +132,8 @@ func (c Config) validate() {
 			log.Println("[config] WARNING: SF_USE_MOCK=false but Salesforce OAuth credentials are not fully set.")
 		}
 	}
-	if c.SupabaseEnabled && (c.SupabaseURL == "" || c.SupabaseAnonKey == "") {
-		log.Println("[config] WARNING: SUPABASE_ENABLED=true but SUPABASE_URL / SUPABASE_ANON_KEY are not set. Cache fallback is disabled.")
+	if c.SupabaseEnabled && (c.SupabaseURL == "" || c.SupabasePublishableKey == "") {
+		log.Println("[config] WARNING: SUPABASE_ENABLED=true but SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY are not set. Cache fallback is disabled.")
 	}
 }
 

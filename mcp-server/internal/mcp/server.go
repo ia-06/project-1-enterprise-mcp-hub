@@ -138,6 +138,22 @@ func (s *Server) registerSalesforceTools() {
 		}
 		return toolResultJSON(fiber_Map{"account": account})
 	})
+
+	// salesforce.listAccounts
+	sfListTool := mcpgo.NewTool("salesforce.listAccounts",
+		mcpgo.WithDescription("List Salesforce Accounts ordered by name. Used to populate the dashboard account selector."),
+		mcpgo.WithNumber("limit",
+			mcpgo.Description("Maximum number of accounts to return (1-200, default 50)."),
+		),
+	)
+	s.mcpServer.AddTool(sfListTool, func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		limit := int(req.GetFloat("limit", 50))
+		accounts, err := s.sfAdp.ListAccounts(ctx, limit)
+		if err != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("salesforce.listAccounts failed: %v", err)), nil
+		}
+		return toolResultJSON(fiber_Map{"accounts": accounts})
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +207,11 @@ func (s *Server) JiraListTicketsByAccount(ctx context.Context, accountSFID strin
 // SalesforceGetAccount delegates to the Salesforce adapter (with cache fallback).
 func (s *Server) SalesforceGetAccount(ctx context.Context, accountID string) (*domain.Account, error) {
 	return s.sfAdp.GetAccount(ctx, accountID)
+}
+
+// SalesforceListAccounts delegates to the Salesforce adapter SOQL query.
+func (s *Server) SalesforceListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
+	return s.sfAdp.ListAccounts(ctx, limit)
 }
 
 // ---------------------------------------------------------------------------
