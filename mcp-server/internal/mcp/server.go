@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -138,6 +139,22 @@ func (s *Server) registerSalesforceTools() {
 		}
 		return toolResultJSON(fiber_Map{"account": account})
 	})
+
+	// salesforce.listAccounts
+	sfListTool := mcpgo.NewTool("salesforce.listAccounts",
+		mcpgo.WithDescription("List Salesforce Accounts ordered by name. Used to populate the dashboard account selector."),
+		mcpgo.WithNumber("limit",
+			mcpgo.Description("Maximum number of accounts to return (1-200, default 50)."),
+		),
+	)
+	s.mcpServer.AddTool(sfListTool, func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		limit := int(req.GetFloat("limit", 50))
+		accounts, err := s.sfAdp.ListAccounts(ctx, limit)
+		if err != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("salesforce.listAccounts failed: %v", err)), nil
+		}
+		return toolResultJSON(fiber_Map{"accounts": accounts})
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -188,9 +205,72 @@ func (s *Server) JiraListTicketsByAccount(ctx context.Context, accountSFID strin
 	return s.jiraAdp.ListTicketsByAccount(ctx, accountSFID)
 }
 
-// SalesforceGetAccount delegates to the Salesforce adapter (with cache fallback).
+// SalesforceGetAccount delegates to the Salesforce adapter (with cache fallback) and computes a dynamic health score.
 func (s *Server) SalesforceGetAccount(ctx context.Context, accountID string) (*domain.Account, error) {
-	return s.sfAdp.GetAccount(ctx, accountID)
+	acc, err := s.sfAdp.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate dynamic health score based on Postgres orders and Jira tickets
+	orders, err := s.salesRepo.ListOrders(ctx, accountID)
+	if err == nil {
+		tickets, err := s.jiraAdp.ListTicketsByAccount(ctx, accountID)
+		if err == nil {
+			score := 100.0
+
+			// Active Jira Tickets impact: deduct based on priority
+			for _, t := range tickets {
+				statusLower := strings.ToLower(t.Status)
+				if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
+					prio := strings.ToLower(t.Priority)
+					if prio == "highest" || prio == "high" {
+						score -= 15.0
+					} else if prio == "medium" {
+						score -= 10.0
+					} else {
+						score -= 5.0
+					}
+				}
+			}
+
+			// Sales Orders impact:
+			hasClosedWon := false
+			closedLostCount := 0
+			for _, o := range orders {
+				if o.Status == "CLOSED_WON" {
+					hasClosedWon = true
+				} else if o.Status == "CLOSED_LOST" {
+					closedLostCount++
+				}
+			}
+
+			// Deduct if the account has no sales footprint
+			if len(orders) == 0 {
+				score -= 10.0
+			} else if !hasClosedWon {
+				score -= 5.0
+			}
+
+			// Deduct for cancelled/lost deals
+			score -= float64(closedLostCount) * 5.0
+
+			if score < 0 {
+				score = 0
+			}
+			if score > 100 {
+				score = 100
+			}
+			acc.HealthScore = score
+		}
+	}
+
+	return acc, nil
+}
+
+// SalesforceListAccounts delegates to the Salesforce adapter SOQL query.
+func (s *Server) SalesforceListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
+	return s.sfAdp.ListAccounts(ctx, limit)
 }
 
 // ---------------------------------------------------------------------------

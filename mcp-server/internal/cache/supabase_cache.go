@@ -4,9 +4,11 @@
 // The cache reads from the `cache_accounts` table, which mirrors the
 // Salesforce Account sObject schema. Only read operations are performed here.
 //
-// Authentication uses the Supabase anon key for read-only PostgREST access.
-// The service_role key (SUPABASE_SERVICE_ROLE_KEY) is loaded into Config for
-// future admin/write operations but is NOT used in this read-only path.
+// Authentication uses the Supabase publishable key (SUPABASE_PUBLISHABLE_KEY,
+// format: sb_publishable_...) for read-only PostgREST access. This replaces
+// the legacy anon key. The secret key (SUPABASE_SECRET_KEY, format: sb_secret_...)
+// is loaded into Config for future admin/write operations but is NOT used in
+// this read-only path.
 //
 // This file performs real outbound HTTPS requests to the live Supabase
 // cluster — there is no mock path. If SUPABASE_ENABLED=false or credentials
@@ -82,7 +84,7 @@ func (c *supabaseAccountCache) GetAccount(ctx context.Context, sfID string) (*do
 	if !c.cfg.SupabaseEnabled {
 		return nil, ErrCacheDisabled
 	}
-	if c.cfg.SupabaseURL == "" || c.cfg.SupabaseAnonKey == "" {
+	if c.cfg.SupabaseURL == "" || c.cfg.SupabasePublishableKey == "" {
 		return nil, ErrCacheDisabled
 	}
 	if sfID == "" {
@@ -102,9 +104,10 @@ func (c *supabaseAccountCache) GetAccount(ctx context.Context, sfID string) (*do
 	}
 
 	// PostgREST requires both the apikey header and a Bearer Authorization
-	// header. The anon key is used for read-only table access.
-	req.Header.Set("apikey", c.cfg.SupabaseAnonKey)
-	req.Header.Set("Authorization", "Bearer "+c.cfg.SupabaseAnonKey)
+	// header. The publishable key (sb_publishable_...) is used for read-only
+	// table access constrained by Row Level Security.
+	req.Header.Set("apikey", c.cfg.SupabasePublishableKey)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.SupabasePublishableKey)
 	req.Header.Set("Accept", "application/json")
 	// Request a single object instead of an array when we expect exactly one row.
 	// "Accept: application/vnd.pgrst.object+json" would 406 if 0 rows — so we

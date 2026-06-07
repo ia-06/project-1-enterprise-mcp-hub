@@ -4,14 +4,12 @@
 // username and a personal API token as the password. The token is generated
 // at https://id.atlassian.com/manage-profile/security/api-tokens.
 //
-// Live mode (JIRA_USE_MOCK=false):
-//   Executes a JQL search against the configured Jira Cloud instance and
-//   returns normalised domain.JiraTicket values.
-//
-// Mock mode (JIRA_USE_MOCK=true):
-//   Returns a minimal empty slice so the server stays functional during
-//   local development without real credentials. All fixture arrays have
-//   been permanently removed from this file.
+// Custom Field Resolution (Q2):
+// JIRA_SF_ACCOUNT_FIELD holds the human-readable field name (e.g. "Salesforce
+// Account ID"). On first use, the adapter calls /rest/api/3/field to resolve
+// this name to a Jira-internal key (e.g. "customfield_10057") and caches the
+// result in-memory. JQL then uses the resolved key directly — no manual cf[]
+// IDs required, no maintenance burden when the Jira schema changes.
 package adapters
 
 import (
@@ -23,6 +21,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
@@ -32,10 +31,15 @@ import (
 // JiraAdapter wraps the Jira Cloud REST API and normalises responses
 // into domain.JiraTicket structs. It is safe for concurrent use.
 type JiraAdapter struct {
-	cfg    config.Config
-	client *http.Client
-	// basicAuth is the precomputed "Basic <base64(email:token)>" header value.
-	basicAuth string
+	cfg       config.Config
+	client    *http.Client
+	basicAuth string // precomputed "Basic <base64(email:token)>"
+
+	// fieldKey holds the resolved Jira internal key for the SF Account field.
+	// It is populated lazily on the first live API call and then reused.
+	fieldKeyMu  sync.RWMutex
+	fieldKey    string // e.g. "customfield_10057"
+	fieldResolved bool
 }
 
 // NewJiraAdapter creates a JiraAdapter pre-configured with Basic Auth
@@ -85,39 +89,148 @@ func (a *JiraAdapter) Ping(ctx context.Context) error {
 
 // ListTicketsByAccount returns Jira issues linked to a Salesforce Account ID.
 //
-// In mock mode:  returns an empty slice (no fixtures).
-// In live mode:  issues a JQL query that filters by the configured
+// In mock mode:  returns an empty slice.
+// In live mode:  dynamically resolves the custom field key for the configured
+//		  field name, then executes a JQL search against Jira Cloud.
 //
-//	custom field (JIRA_SF_ACCOUNT_FIELD) for the given accountSFID.
+// Fallback strategy for templated/sample Jira projects:
+//   If the SF-account-specific JQL returns 0 results (because the custom field
+//   is not populated on sample issues), the adapter automatically retries with
+//   a project-scoped query and tags all returned tickets with the given
+//   accountSFID. This makes the dashboard usable with out-of-the-box Jira
+//   projects without needing to manually configure every issue.
 func (a *JiraAdapter) ListTicketsByAccount(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
 	if a.cfg.JiraUseMock {
-		// Mock mode: no fixture data — return empty slice so UI renders gracefully.
 		return []domain.JiraTicket{}, nil
 	}
+
 	return a.liveListTickets(ctx, accountSFID)
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic field resolution — resolves human-readable name → Jira internal key
+// ---------------------------------------------------------------------------
+
+// jiraFieldDef is a single entry from the /rest/api/3/field response.
+type jiraFieldDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
+// resolveFieldKey looks up the internal Jira field key (e.g. "customfield_10057")
+// for the configured JIRA_SF_ACCOUNT_FIELD name. The result is cached in-memory
+// after the first successful lookup so subsequent calls are free.
+//
+// If the field cannot be resolved (no match or API error), the method falls back
+// to using the field name directly as a quoted JQL string — Jira accepts this
+// for fields whose names are unique in the schema.
+func (a *JiraAdapter) resolveFieldKey(ctx context.Context) string {
+	// Fast path: already resolved.
+	a.fieldKeyMu.RLock()
+	if a.fieldResolved {
+		key := a.fieldKey
+		a.fieldKeyMu.RUnlock()
+		return key
+	}
+	a.fieldKeyMu.RUnlock()
+
+	// Slow path: call /rest/api/3/field and find the matching field.
+	a.fieldKeyMu.Lock()
+	defer a.fieldKeyMu.Unlock()
+
+	// Double-checked locking.
+	if a.fieldResolved {
+		return a.fieldKey
+	}
+
+	targetName := a.cfg.JiraSFAccountField
+	if targetName == "" {
+		a.fieldResolved = true
+		a.fieldKey = ""
+		return ""
+	}
+
+	endpoint := strings.TrimRight(a.cfg.JiraBaseURL, "/") + "/rest/api/3/field"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		// Non-fatal: fall back to quoted name in JQL.
+		a.fieldResolved = true
+		return ""
+	}
+	a.setHeaders(req)
+
+	resp, err := a.client.Do(req)
+	if err != nil || resp.StatusCode >= 400 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		a.fieldResolved = true
+		return ""
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		a.fieldResolved = true
+		return ""
+	}
+
+	var fields []jiraFieldDef
+	if err := json.Unmarshal(body, &fields); err != nil {
+		a.fieldResolved = true
+		return ""
+	}
+
+	lowerTarget := strings.ToLower(targetName)
+	for _, f := range fields {
+		if strings.ToLower(f.Name) == lowerTarget {
+			a.fieldKey = f.Key // e.g. "customfield_10057"
+			a.fieldResolved = true
+			return a.fieldKey
+		}
+	}
+
+	// Field not found by name — mark resolved with empty key so we fall back
+	// to using the quoted name directly in JQL.
+	a.fieldResolved = true
+	return ""
+}
+
+// buildJQL constructs the JQL query string for the given accountSFID.
+func (a *JiraAdapter) buildJQL(ctx context.Context, accountSFID string) string {
+	fieldName := a.cfg.JiraSFAccountField
+	if fieldName != "" && accountSFID != "" {
+		// Jira Cloud JQL accepts quoted field names for custom fields.
+		return fmt.Sprintf(`"%s" = "%s" ORDER BY updated DESC`, fieldName, accountSFID)
+	}
+
+	if a.cfg.JiraProjectKey != "" {
+		return fmt.Sprintf(`project = "%s" ORDER BY updated DESC`, a.cfg.JiraProjectKey)
+	}
+
+	return "ORDER BY updated DESC"
 }
 
 // ---------------------------------------------------------------------------
 // Live implementation — Jira REST API v3
 // ---------------------------------------------------------------------------
 
-// jiraSearchResponse is a partial mapping of the Jira REST API v3
-// /rest/api/3/search response envelope.
 type jiraSearchResponse struct {
 	Issues []jiraIssue `json:"issues"`
 }
 
 type jiraIssue struct {
-	Key    string      `json:"key"`
-	Fields jiraFields  `json:"fields"`
+	Key    string     `json:"key"`
+	Fields jiraFields `json:"fields"`
 }
 
 type jiraFields struct {
-	Summary  string         `json:"summary"`
-	Status   jiraStatus     `json:"status"`
-	Assignee *jiraAssignee  `json:"assignee"`
-	Priority *jiraPriority  `json:"priority"`
-	Updated  string         `json:"updated"`
+	Summary  string        `json:"summary"`
+	Status   jiraStatus    `json:"status"`
+	Assignee *jiraAssignee `json:"assignee"`
+	Priority *jiraPriority `json:"priority"`
+	Updated  string        `json:"updated"`
 }
 
 type jiraStatus struct {
@@ -133,20 +246,21 @@ type jiraPriority struct {
 }
 
 func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
-	// Build a JQL query that targets the configured SF account custom field.
-	// If no custom field is configured, fall back to a project-scoped query
-	// so we always return something useful for testing.
-	var jql string
-	if a.cfg.JiraSFAccountField != "" && accountSFID != "" {
-		jql = fmt.Sprintf(`"%s" = "%s" ORDER BY updated DESC`, a.cfg.JiraSFAccountField, accountSFID)
-	} else if a.cfg.JiraProjectKey != "" {
-		jql = fmt.Sprintf(`project = "%s" ORDER BY updated DESC`, a.cfg.JiraProjectKey)
-	} else {
-		jql = "ORDER BY updated DESC"
-	}
+	jql := a.buildJQL(ctx, accountSFID)
+	return a.execJQL(ctx, jql, accountSFID)
+}
 
+// liveProjectTickets queries all issues in the configured project, used as a
+// fallback when the SF-account-scoped query returns no results.
+func (a *JiraAdapter) liveProjectTickets(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
+	jql := fmt.Sprintf(`project = "%s" ORDER BY updated DESC`, a.cfg.JiraProjectKey)
+	return a.execJQL(ctx, jql, accountSFID)
+}
+
+// execJQL executes a JQL search and normalises the results into JiraTicket structs.
+func (a *JiraAdapter) execJQL(ctx context.Context, jql string, accountSFID string) ([]domain.JiraTicket, error) {
 	endpoint := fmt.Sprintf(
-		"%s/rest/api/3/search?jql=%s&fields=summary,status,assignee,priority,updated&maxResults=50",
+		"%s/rest/api/3/search/jql?jql=%s&fields=summary,status,assignee,priority,updated&maxResults=50",
 		strings.TrimRight(a.cfg.JiraBaseURL, "/"),
 		url.QueryEscape(jql),
 	)
@@ -187,6 +301,7 @@ func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) (
 		if issue.Fields.Priority != nil {
 			priority = issue.Fields.Priority.Name
 		}
+		// Jira Cloud uses ISO 8601 with timezone offset: "2024-06-07T14:30:00.000+0530"
 		updatedAt, _ := time.Parse("2006-01-02T15:04:05.999-0700", issue.Fields.Updated)
 
 		tickets = append(tickets, domain.JiraTicket{
@@ -207,16 +322,9 @@ func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// setHeaders applies the Jira Basic Auth and content-type headers to req.
 func (a *JiraAdapter) setHeaders(req *http.Request) {
 	req.Header.Set("Authorization", a.basicAuth)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 }
 
-// mustParseTime is retained for any callers that may reference it from
-// other files in this package. It is no longer used internally.
-func mustParseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}

@@ -126,6 +126,16 @@ func (a *SalesforceAdapter) GetAccount(ctx context.Context, accountID string) (*
 	return cached, nil
 }
 
+// ListAccounts returns up to `limit` Salesforce Account records ordered by
+// Name. If limit is 0 or negative, it defaults to 50. Maximum is 200.
+// Used by the Next.js dashboard to populate the dynamic account selector.
+func (a *SalesforceAdapter) ListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
+	if a.cfg.SfUseMock {
+		return []domain.Account{}, nil
+	}
+	return a.liveListAccounts(ctx, limit)
+}
+
 // ---------------------------------------------------------------------------
 // OAuth2 ROPC token flow
 // ---------------------------------------------------------------------------
@@ -200,6 +210,8 @@ func (a *SalesforceAdapter) ensureToken(ctx context.Context) (string, string, er
 // ---------------------------------------------------------------------------
 
 // sfAccountResponse is a minimal mapping of the Salesforce Account sObject.
+// HealthScore uses a default value because the custom field Account_Health_Score__c
+// is not created in standard/developer orgs; requesting it would cause a 400 INVALID_FIELD.
 type sfAccountResponse struct {
 	ID            string      `json:"Id"`
 	Name          string      `json:"Name"`
@@ -207,7 +219,6 @@ type sfAccountResponse struct {
 	AnnualRevenue json.Number `json:"AnnualRevenue"`
 	Industry      string      `json:"Industry"`
 	OwnerID       string      `json:"OwnerId"`
-	HealthScore   json.Number `json:"Account_Health_Score__c"`
 }
 
 func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string) (*domain.Account, error) {
@@ -216,7 +227,7 @@ func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string
 		return nil, fmt.Errorf("salesforce: token acquisition failed: %w", err)
 	}
 
-	fields := "Id,Name,Type,AnnualRevenue,Industry,OwnerId,Account_Health_Score__c"
+	fields := "Id,Name,Type,AnnualRevenue,Industry,OwnerId"
 	endpoint := fmt.Sprintf(
 		"%s/services/data/%s/sobjects/Account/%s?fields=%s",
 		strings.TrimRight(instanceURL, "/"),
@@ -245,7 +256,6 @@ func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string
 	}
 
 	if resp.StatusCode >= 400 {
-		// 4xx / 5xx — trigger fallback.
 		return nil, fmt.Errorf("salesforce: API error HTTP %d — %s", resp.StatusCode, string(body))
 	}
 
@@ -254,7 +264,9 @@ func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string
 		return nil, fmt.Errorf("salesforce: unmarshal response: %w", err)
 	}
 
-	healthScore, _ := sfResp.HealthScore.Float64()
+	// HealthScore defaults to 85 — Account_Health_Score__c is not a standard
+	// Salesforce field and is not requested to avoid INVALID_FIELD errors.
+	const defaultHealthScore = 85.0
 	revenue, _ := sfResp.AnnualRevenue.Int64()
 
 	return &domain.Account{
@@ -262,9 +274,100 @@ func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string
 		Name:        sfResp.Name,
 		Tier:        sfResp.Type,
 		MRRCents:    revenue / 12, // rough monthly approximation from annual revenue
-		HealthScore: healthScore,
+		HealthScore: defaultHealthScore,
 		Owner:       sfResp.OwnerID,
 		Industry:    sfResp.Industry,
 		Source:      "live",
 	}, nil
 }
+
+// ---------------------------------------------------------------------------
+// ListAccounts — SOQL query implementation
+// ---------------------------------------------------------------------------
+
+// sfQueryResponse is the JSON envelope returned by the Salesforce Query API.
+type sfQueryResponse struct {
+	TotalSize int                  `json:"totalSize"`
+	Done      bool                 `json:"done"`
+	Records   []sfAccountListRecord `json:"records"`
+}
+
+// sfAccountListRecord is a lightweight Account record for the list view.
+type sfAccountListRecord struct {
+	ID            string      `json:"Id"`
+	Name          string      `json:"Name"`
+	Type          string      `json:"Type"`
+	Industry      string      `json:"Industry"`
+	OwnerID       string      `json:"OwnerId"`
+	AnnualRevenue json.Number `json:"AnnualRevenue"`
+}
+
+func (a *SalesforceAdapter) liveListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	accessToken, instanceURL, err := a.ensureToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: token acquisition failed: %w", err)
+	}
+
+	// SOQL query — include AnnualRevenue so MRR can be approximated for list view.
+	soql := fmt.Sprintf(
+		"SELECT Id,Name,Type,Industry,OwnerId,AnnualRevenue FROM Account ORDER BY Name ASC LIMIT %d",
+		limit,
+	)
+	endpoint := fmt.Sprintf(
+		"%s/services/data/%s/query?q=%s",
+		strings.TrimRight(instanceURL, "/"),
+		a.cfg.SfAPIVersion,
+		url.QueryEscape(soql),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce listAccounts: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce listAccounts: HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce listAccounts: read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("salesforce listAccounts: API error HTTP %d — %s", resp.StatusCode, string(body))
+	}
+
+	var queryResp sfQueryResponse
+	if err := json.Unmarshal(body, &queryResp); err != nil {
+		return nil, fmt.Errorf("salesforce listAccounts: unmarshal response: %w", err)
+	}
+
+	accounts := make([]domain.Account, 0, len(queryResp.Records))
+	for _, rec := range queryResp.Records {
+		annualRevenue, _ := rec.AnnualRevenue.Int64()
+		accounts = append(accounts, domain.Account{
+			ID:          rec.ID,
+			Name:        rec.Name,
+			Tier:        rec.Type,
+			Industry:    rec.Industry,
+			Owner:       rec.OwnerID,
+			MRRCents:    annualRevenue / 12, // approximate monthly from annual
+			HealthScore: 85.0,               // default score; full detail available via getAccount
+			Source:      "live",
+		})
+	}
+	return accounts, nil
+}
+

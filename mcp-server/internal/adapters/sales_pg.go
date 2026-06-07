@@ -68,11 +68,12 @@ func (r *pgSalesRepository) ListOrders(ctx context.Context, customerID string) (
 		`)
 	} else {
 		rows, err = r.pool.Query(ctx, `
-			SELECT id, customer_id, order_number, amount_cents, currency,
-			       status, closed_at, created_at
-			FROM   sales_orders
-			WHERE  customer_id = $1
-			ORDER  BY created_at DESC
+			SELECT o.id, o.customer_id, o.order_number, o.amount_cents, o.currency,
+			       o.status, o.closed_at, o.created_at
+			FROM   sales_orders o
+			JOIN   customers c ON o.customer_id = c.id
+			WHERE  c.external_sf_id = $1 OR CAST(c.id AS TEXT) = $1
+			ORDER  BY o.created_at DESC
 		`, customerID)
 	}
 
@@ -93,7 +94,7 @@ func (r *pgSalesRepository) GetCustomerSummary(ctx context.Context, customerID s
 		SELECT id, COALESCE(external_sf_id, ''), name,
 		       COALESCE(industry, ''), created_at
 		FROM   customers
-		WHERE  id = $1
+		WHERE  external_sf_id = $1 OR CAST(id AS TEXT) = $1
 	`, customerID).Scan(&c.ID, &c.ExternalSFID, &c.Name, &c.Industry, &c.CreatedAt)
 
 	if err != nil {
@@ -114,7 +115,7 @@ func (r *pgSalesRepository) GetCustomerSummary(ctx context.Context, customerID s
 		  COUNT(*) AS order_count
 		FROM sales_orders
 		WHERE customer_id = $1
-	`, customerID).Scan(&closedWon, &openPipeline, &orderCount)
+	`, c.ID).Scan(&closedWon, &openPipeline, &orderCount)
 
 	if err != nil {
 		return domain.SalesSummary{}, fmt.Errorf("GetCustomerSummary aggregate query: %w", err)
