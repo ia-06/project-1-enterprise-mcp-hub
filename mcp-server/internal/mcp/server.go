@@ -258,11 +258,12 @@ func (s *Server) SalesforceGetAccount(ctx context.Context, accountID string) (*d
 		statusLower := strings.ToLower(t.Status)
 		if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
 			prio := strings.ToLower(t.Priority)
-			if prio == "highest" || prio == "high" {
+			switch prio {
+			case "highest", "high":
 				score -= 15.0
-			} else if prio == "medium" {
+			case "medium":
 				score -= 10.0
-			} else {
+			default:
 				score -= 5.0
 			}
 		}
@@ -272,9 +273,10 @@ func (s *Server) SalesforceGetAccount(ctx context.Context, accountID string) (*d
 	hasClosedWon := false
 	closedLostCount := 0
 	for _, o := range orders {
-		if o.Status == "CLOSED_WON" {
+		switch o.Status {
+		case "CLOSED_WON":
 			hasClosedWon = true
-		} else if o.Status == "CLOSED_LOST" {
+		case "CLOSED_LOST":
 			closedLostCount++
 		}
 	}
@@ -352,11 +354,12 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 		statusLower := strings.ToLower(t.Status)
 		if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
 			prio := strings.ToLower(t.Priority)
-			if prio == "highest" || prio == "high" {
+			switch prio {
+			case "highest", "high":
 				score -= 15.0
-			} else if prio == "medium" {
+			case "medium":
 				score -= 10.0
-			} else {
+			default:
 				score -= 5.0
 			}
 		}
@@ -368,12 +371,13 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 	summary := domain.SalesSummary{TotalClosedWonCents: 0, OpenPipelineCents: 0, OrderCount: 0}
 	
 	for _, o := range orders {
-		if o.Status == "CLOSED_WON" {
+		switch o.Status {
+		case "CLOSED_WON":
 			hasClosedWon = true
 			summary.TotalClosedWonCents += o.AmountCents
-		} else if o.Status == "CLOSED_LOST" {
+		case "CLOSED_LOST":
 			closedLostCount++
-		} else if o.Status == "OPEN" || o.Status == "PENDING" {
+		case "OPEN", "PENDING":
 			summary.OpenPipelineCents += o.AmountCents
 		}
 		summary.OrderCount++

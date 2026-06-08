@@ -193,6 +193,8 @@ func handleSingleRPC(
 	switch req.Method {
 	case "system.healthCheck":
 		result, rpcErr = handleHealthCheck(ctx, mcpServer)
+	case "system.customer360":
+		result, rpcErr = handleSystemCustomer360(ctx, mcpServer, req.Params)
 	case "sales.listOrders":
 		result, rpcErr = handleSalesListOrders(ctx, mcpServer, req.Params)
 	case "sales.getCustomerSummary":
@@ -307,6 +309,20 @@ func handleSalesforceListAccounts(ctx context.Context, s *internalmcp.Server, pa
 		return nil, mapAdapterError(err, errCodeSalesforceUnavailable, "Salesforce data source unavailable")
 	}
 	return fiber.Map{"accounts": accounts}, nil
+}
+
+func handleSystemCustomer360(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params", Data: fiber.Map{"detail": err.Error()}}
+	}
+	c360, err := s.SystemCustomer360(ctx, p.AccountID)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
+	}
+	return c360, nil
 }
 
 // ---------------------------------------------------------------------------
