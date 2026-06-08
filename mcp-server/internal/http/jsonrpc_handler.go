@@ -191,6 +191,14 @@ func handleSingleRPC(
 	var rpcErr *rpcError
 
 	switch req.Method {
+	case "initialize":
+		result, rpcErr = handleMCPInitialize()
+	case "notifications/initialized":
+		result, rpcErr = handleMCPInitialized()
+	case "tools/list":
+		result, rpcErr = handleMCPToolsList()
+	case "tools/call":
+		result, rpcErr = handleMCPToolsCall(ctx, mcpServer, req.Params)
 	case "system.healthCheck":
 		result, rpcErr = handleHealthCheck(ctx, mcpServer)
 	case "system.customer360":
@@ -323,6 +331,121 @@ func handleSystemCustomer360(ctx context.Context, s *internalmcp.Server, params 
 		return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
 	}
 	return c360, nil
+}
+
+// ---------------------------------------------------------------------------
+// Standard MCP Protocol Adapters
+// ---------------------------------------------------------------------------
+
+func handleMCPInitialize() (interface{}, *rpcError) {
+	return fiber.Map{
+		"protocolVersion": "2024-11-05",
+		"serverInfo": fiber.Map{
+			"name":    "enterprise-mcp-hub",
+			"version": "1.0.0",
+		},
+		"capabilities": fiber.Map{
+			"tools": fiber.Map{},
+		},
+	}, nil
+}
+
+func handleMCPInitialized() (interface{}, *rpcError) {
+	return nil, nil // ACK notification without returning error
+}
+
+func handleMCPToolsList() (interface{}, *rpcError) {
+	return fiber.Map{
+		"tools": []fiber.Map{
+			{
+				"name":        "system_customer360",
+				"description": "Fetch aggregated customer data from Salesforce, Jira, and Postgres simultaneously to generate a 360 view.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account ID to fetch.",
+						},
+					},
+					"required": []string{"accountId"},
+				},
+			},
+			{
+				"name":        "salesforce_listAccounts",
+				"description": "List available Salesforce accounts to find valid Account IDs.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"limit": fiber.Map{
+							"type":        "number",
+							"description": "Max number of accounts to return (default 50).",
+						},
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params", Data: fiber.Map{"detail": err.Error()}}
+	}
+
+	if p.Name == "system_customer360" {
+		var args struct {
+			AccountID string `json:"accountId"`
+		}
+		if err := json.Unmarshal(p.Arguments, &args); err != nil {
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid arguments", Data: fiber.Map{"detail": err.Error()}}
+		}
+		c360, err := s.SystemCustomer360(ctx, args.AccountID)
+		if err != nil {
+			return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
+		}
+		
+		c360Bytes, _ := json.Marshal(c360)
+		return fiber.Map{
+			"content": []fiber.Map{
+				{
+					"type": "text",
+					"text": string(c360Bytes),
+				},
+			},
+		}, nil
+	}
+
+	if p.Name == "salesforce_listAccounts" {
+		var args struct {
+			Limit int `json:"limit"`
+		}
+		if len(p.Arguments) > 0 {
+			json.Unmarshal(p.Arguments, &args)
+		}
+		if args.Limit <= 0 {
+			args.Limit = 50
+		}
+		accounts, err := s.SalesforceListAccounts(ctx, args.Limit)
+		if err != nil {
+			return nil, mapAdapterError(err, errCodeInternal, "Failed to list Salesforce accounts")
+		}
+		accountsBytes, _ := json.Marshal(accounts)
+		return fiber.Map{
+			"content": []fiber.Map{
+				{
+					"type": "text",
+					"text": string(accountsBytes),
+				},
+			},
+		}, nil
+	}
+
+	return nil, &rpcError{Code: errCodeMethodNotFound, Message: "Tool not found", Data: fiber.Map{"tool": p.Name}}
 }
 
 // ---------------------------------------------------------------------------
