@@ -1,54 +1,72 @@
 const METHODS = [
   {
-    method: "salesforce.listAccounts",
-    desc:   "List live Salesforce Accounts (SOQL). Populates the dashboard selector.",
-    params: '{ "limit": 50 }',
-  },
-  {
-    method: "salesforce.getAccount",
-    desc:   "Fetch a single Account by SF ID. Auto-falls back to Supabase cache.",
+    method: "system_customer360",
+    desc:   "Fetch aggregated customer data from Salesforce, Jira, and Postgres simultaneously.",
     params: '{ "accountId": "001..." }',
   },
   {
-    method: "jira.listTicketsByAccount",
-    desc:   "JQL tickets linked to an SF Account ID via the custom field.",
+    method: "salesforce_listAccounts",
+    desc:   "List available Salesforce accounts to find valid Account IDs for the agent.",
+    params: '{ "limit": 50 }',
+  },
+  {
+    method: "salesforce_getAccount",
+    desc:   "Fetch a single Salesforce Account by SF ID.",
+    params: '{ "accountId": "001..." }',
+  },
+  {
+    method: "jira_listTicketsByAccount",
+    desc:   "List Jira tickets linked to a Salesforce Account ID.",
     params: '{ "accountSfId": "001..." }',
   },
   {
-    method: "sales.listOrders",
-    desc:   "Postgres sales orders, optionally filtered by internal customer UUID.",
+    method: "sales_listOrders",
+    desc:   "List Postgres sales orders, optionally filtered by customer ID.",
     params: '{ "customerId": "uuid" }',
   },
   {
-    method: "sales.getCustomerSummary",
+    method: "sales_getCustomerSummary",
     desc:   "Aggregate pipeline totals (closed-won, open, order count).",
     params: '{ "customerId": "uuid" }',
   },
-  {
-    method: "system.healthCheck",
-    desc:   "Probes all three channels and returns status for each.",
-    params: "{}",
-  },
 ];
 
-const STEP_1 = `# Start the MCP server
+const STEP_1 = `# Stdio mode (Claude/Cursor)
 cd mcp-server
-go run ./cmd/server`;
+go run ./cmd/server -mode=stdio
 
-const STEP_2 = `# Configure agent endpoint
+# HTTP mode (VS Code Copilot)
+go run ./cmd/server -mode=http`;
+
+const STEP_2 = `# Claude Desktop / Cursor (stdio)
 {
-  "mcpServer": {
-    "url": "http://localhost:8080/rpc",
-    "transport": "jsonrpc"
+  "mcpServers": {
+    "enterprise-hub": {
+      "command": "go",
+      "args": ["run", "./cmd/server", "-mode=stdio"]
+    }
+  }
+}
+
+# VS Code Copilot (http)
+{
+  "mcpServers": {
+    "enterprise-hub": {
+      "url": "http://localhost:8080/rpc",
+      "type": "http"
+    }
   }
 }`;
 
-const STEP_3 = `# Call tool via JSON-RPC
+const STEP_3 = `# Call tool via MCP Protocol
 {
   "jsonrpc": "2.0",
-  "method": "salesforce.getAccount",
+  "method": "tools/call",
   "params": {
-    "accountId": "001abc..."
+    "name": "system_customer360",
+    "arguments": {
+      "accountId": "001abc..."
+    }
   },
   "id": "1"
 }
@@ -57,11 +75,7 @@ const STEP_3 = `# Call tool via JSON-RPC
 {
   "jsonrpc": "2.0",
   "result": {
-    "account": {
-      "id": "001abc...",
-      "name": "ACME Corp",
-      "source": "live"
-    }
+    "content": [{ "type": "text", "text": "{...}" }]
   },
   "id": "1"
 }`;
@@ -79,12 +93,8 @@ export default function McpDocsSection() {
             Plug our MCP server into your agent workflow.
           </h2>
           <p className="body-lg" style={{ color: "rgba(255,255,255,0.45)" }}>
-            The Go Fiber server exposes JSON-RPC 2.0 at{" "}
-            <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "13px", color: "#a5d6ff" }}>
-              POST /rpc
-            </code>{" "}
-            on port 8080. Connect any MCP-compatible agent in three steps — then call any of the
-            six registered tools below.
+            The Go server natively supports both <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "13px", color: "#a5d6ff" }}>stdio</code> and <code style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: "13px", color: "#a5d6ff" }}>http</code> transports. 
+            Connect any MCP-compatible agent in three steps — then invoke the registered MCP tools below.
           </p>
         </div>
 
@@ -153,9 +163,8 @@ export default function McpDocsSection() {
         >
           <p style={{ fontSize: "13px", color: "rgba(255,255,255,0.45)", lineHeight: "20px" }}>
             <span style={{ color: "rgba(255,255,255,0.7)", fontWeight: 500 }}>Compatible agents:</span>{" "}
-            Claude Desktop, Cursor, Windsurf, GitHub Copilot Extensions, LangChain JSON-RPC tool,
-            or any custom agent that speaks the MCP JSON-RPC 2.0 protocol.
-            Batch requests (JSON array) are fully supported.
+            GitHub Copilot, Claude Desktop, Cursor, Windsurf, or any custom agent that speaks the standard MCP protocol.
+            The backend natively supports the initialize, tools/list, and tools/call lifecycles.
           </p>
         </div>
       </div>

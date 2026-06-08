@@ -64,14 +64,35 @@ Navigate to `http://localhost:3000` to verify the application is successfully st
 
 ## AI Agent Integration (MCP)
 
-To connect the backend to an MCP-compatible agent (e.g., GitHub Copilot in VS Code):
+The backend functions as a Universal MCP Server, supporting both `stdio` and `http` transports.
 
-1. Open VS Code.
-2. Open the Command Palette and execute: `MCP: Add Server`.
-3. Select `HTTP (HTTP or Server-Sent Events)`.
-4. Enter the backend URL: `http://localhost:8080/rpc`.
-5. Enable Agent Mode within the Copilot interface.
+### Option A: Standard Stdio Transport (Claude Desktop, Cursor, Windsurf)
+Configure your agent to execute the Go binary as a child process using the `-mode=stdio` flag.
+Example configuration:
+```json
+{
+  "mcpServers": {
+    "enterprise-hub": {
+      "command": "go",
+      "args": ["run", "./cmd/server", "-mode=stdio"]
+    }
+  }
+}
+```
 
-The agent will now have access to the registered tools, such as `salesforce_listAccounts` and `system_customer360`.
+### Option B: HTTP Transport (VS Code Copilot)
+If the server is running in HTTP mode (default), configure the agent to connect via the RPC endpoint:
+```json
+{
+  "mcpServers": {
+    "enterprise-hub": {
+      "url": "http://localhost:8080/rpc",
+      "type": "http"
+    }
+  }
+}
+```
+
+Upon connection, the agent will have autonomous access to the full suite of enterprise tools (e.g., `system_customer360`, `salesforce_getAccount`, `jira_listTicketsByAccount`, `sales_listOrders`).
 
 ---

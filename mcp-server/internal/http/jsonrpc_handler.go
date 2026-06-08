@@ -63,64 +63,66 @@ const (
 // Route registration
 // ---------------------------------------------------------------------------
 
-// RegisterJSONRPCHandler mounts POST /rpc on the Fiber app. It accepts both
-// single JSON-RPC 2.0 objects and JSON arrays (batch requests).
+// ProcessJSONRPC processes a raw JSON-RPC 2.0 payload (single or batch)
+// and returns the raw JSON response bytes. It returns nil if the request
+// was purely notifications.
+func ProcessJSONRPC(ctx context.Context, cfg config.Config, mcpServer *internalmcp.Server, rawBody []byte) []byte {
+	if len(rawBody) == 0 {
+		errResp := &rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: errCodeParseError, Message: "Parse error"}}
+		b, _ := json.Marshal(errResp)
+		return b
+	}
+
+	var rawMsg json.RawMessage
+	if err := json.Unmarshal(rawBody, &rawMsg); err != nil {
+		errResp := &rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: errCodeParseError, Message: "Parse error", Data: fiber.Map{"detail": err.Error()}}}
+		b, _ := json.Marshal(errResp)
+		return b
+	}
+
+	requests, isBatch, err := parseRequests(rawMsg)
+	if err != nil {
+		errResp := &rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: errCodeInvalidRequest, Message: "Invalid Request", Data: fiber.Map{"detail": err.Error()}}}
+		b, _ := json.Marshal(errResp)
+		return b
+	}
+
+	responses := make([]rpcResponse, 0, len(requests))
+	for _, req := range requests {
+		resp := handleSingleRPC(ctx, mcpServer, req)
+		if resp != nil {
+			responses = append(responses, *resp)
+		}
+	}
+
+	if len(responses) == 0 {
+		return nil
+	}
+
+	if !isBatch && len(responses) == 1 {
+		b, _ := json.Marshal(responses[0])
+		return b
+	}
+	b, _ := json.Marshal(responses)
+	return b
+}
+
+// RegisterJSONRPCHandler mounts POST /rpc on the Fiber app.
 func RegisterJSONRPCHandler(
 	app *fiber.App,
 	cfg config.Config,
 	mcpServer *internalmcp.Server,
 ) {
 	app.Post("/rpc", func(c fiber.Ctx) error {
-		// Always respond with HTTP 200; JSON-RPC errors are in the body.
 		c.Set("Content-Type", "application/json")
-
-		// ----------------------------------------------------------------
-		// Step 1: Parse raw body
-		// ----------------------------------------------------------------
-		rawBody := c.Body()
-		if len(rawBody) == 0 {
-			return writeRPCError(c, nil, errCodeParseError, "Parse error", nil)
-		}
-
-		// ----------------------------------------------------------------
-		// Step 2: Detect single vs. batch request
-		// ----------------------------------------------------------------
-		var rawMsg json.RawMessage
-		if err := json.Unmarshal(rawBody, &rawMsg); err != nil {
-			return writeRPCError(c, nil, errCodeParseError, "Parse error", fiber.Map{
-				"detail": err.Error(),
-			})
-		}
-
-		requests, isBatch, err := parseRequests(rawMsg)
-		if err != nil {
-			return writeRPCError(c, nil, errCodeInvalidRequest, "Invalid Request", fiber.Map{
-				"detail": err.Error(),
-			})
-		}
-
-		// ----------------------------------------------------------------
-		// Step 3: Dispatch each request
-		// ----------------------------------------------------------------
 		ctx, cancel := context.WithTimeout(c.Context(), cfg.RequestTimeout)
 		defer cancel()
 
-		responses := make([]rpcResponse, 0, len(requests))
-		for _, req := range requests {
-			resp := handleSingleRPC(ctx, mcpServer, req)
-			// JSON-RPC 2.0 spec: notifications (no id) produce no response.
-			if resp != nil {
-				responses = append(responses, *resp)
-			}
+		respBytes := ProcessJSONRPC(ctx, cfg, mcpServer, c.Body())
+		if len(respBytes) == 0 {
+			return c.SendStatus(200)
 		}
-
-		// ----------------------------------------------------------------
-		// Step 4: Return single or batch response
-		// ----------------------------------------------------------------
-		if !isBatch && len(responses) == 1 {
-			return c.JSON(responses[0])
-		}
-		return c.JSON(responses)
+		return c.Send(respBytes)
 	})
 }
 
@@ -384,6 +386,69 @@ func handleMCPToolsList() (interface{}, *rpcError) {
 					},
 				},
 			},
+			{
+				"name":        "salesforce_getAccount",
+				"description": "Fetch a single Salesforce Account by SF ID.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account ID to fetch.",
+						},
+					},
+					"required": []string{"accountId"},
+				},
+			},
+			{
+				"name":        "jira_listTicketsByAccount",
+				"description": "List Jira tickets linked to a Salesforce Account ID.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountSfId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account ID linked to the Jira tickets.",
+						},
+					},
+					"required": []string{"accountSfId"},
+				},
+			},
+			{
+				"name":        "sales_listOrders",
+				"description": "List Postgres sales orders, optionally filtered by customer ID.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"customerId": fiber.Map{
+							"type":        "string",
+							"description": "The Postgres Customer ID to filter by.",
+						},
+					},
+				},
+			},
+			{
+				"name":        "sales_getCustomerSummary",
+				"description": "Aggregate pipeline totals (closed-won, open, order count).",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"customerId": fiber.Map{
+							"type":        "string",
+							"description": "The Postgres Customer ID.",
+						},
+					},
+					"required": []string{"customerId"},
+				},
+			},
+			{
+				"name":        "system_healthCheck",
+				"description": "Probes all three channels and returns status for each.",
+				"inputSchema": fiber.Map{
+					"type":       "object",
+					"properties": fiber.Map{},
+				},
+			},
 		},
 	}, nil
 }
@@ -401,48 +466,70 @@ func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.
 		var args struct {
 			AccountID string `json:"accountId"`
 		}
-		if err := json.Unmarshal(p.Arguments, &args); err != nil {
-			return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid arguments", Data: fiber.Map{"detail": err.Error()}}
+		if len(p.Arguments) > 0 {
+			json.Unmarshal(p.Arguments, &args)
 		}
 		c360, err := s.SystemCustomer360(ctx, args.AccountID)
 		if err != nil {
 			return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
 		}
-
 		c360Bytes, _ := json.Marshal(c360)
 		return fiber.Map{
-			"content": []fiber.Map{
-				{
-					"type": "text",
-					"text": string(c360Bytes),
-				},
-			},
+			"content": []fiber.Map{{ "type": "text", "text": string(c360Bytes) }},
 		}, nil
 	}
 
 	if p.Name == "salesforce_listAccounts" {
-		var args struct {
-			Limit int `json:"limit"`
-		}
-		if len(p.Arguments) > 0 {
-			json.Unmarshal(p.Arguments, &args)
-		}
-		if args.Limit <= 0 {
-			args.Limit = 50
-		}
-		accounts, err := s.SalesforceListAccounts(ctx, args.Limit)
-		if err != nil {
-			return nil, mapAdapterError(err, errCodeInternal, "Failed to list Salesforce accounts")
-		}
-		accountsBytes, _ := json.Marshal(accounts)
-		return fiber.Map{
-			"content": []fiber.Map{
-				{
-					"type": "text",
-					"text": string(accountsBytes),
-				},
-			},
-		}, nil
+		var args struct { Limit int `json:"limit"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		if args.Limit <= 0 { args.Limit = 50 }
+		res, err := s.SalesforceListAccounts(ctx, args.Limit)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to list Salesforce accounts") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "salesforce_getAccount" {
+		var args struct { AccountID string `json:"accountId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.SalesforceGetAccount(ctx, args.AccountID)
+		if err != nil { return nil, mapAdapterError(err, errCodeSalesforceUnavailable, "Salesforce unavailable") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "jira_listTicketsByAccount" {
+		var args struct { AccountSfID string `json:"accountSfId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.JiraListTicketsByAccount(ctx, args.AccountSfID)
+		if err != nil { return nil, mapAdapterError(err, errCodeJiraUnavailable, "Jira unavailable") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "sales_listOrders" {
+		var args struct { CustomerID string `json:"customerId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.SalesListOrders(ctx, args.CustomerID)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to list Postgres orders") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "sales_getCustomerSummary" {
+		var args struct { CustomerID string `json:"customerId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.SalesGetCustomerSummary(ctx, args.CustomerID)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to get Postgres customer summary") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "system_healthCheck" {
+		res, err := s.HealthCheck(ctx)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed health check") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
 	}
 
 	return nil, &rpcError{Code: errCodeMethodNotFound, Message: "Tool not found", Data: fiber.Map{"tool": p.Name}}
@@ -453,10 +540,10 @@ func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.
 // ---------------------------------------------------------------------------
 
 // writeRPCError writes a spec-compliant JSON-RPC 2.0 error body with HTTP 200.
-func writeRPCError(c fiber.Ctx, id interface{}, code int, msg string, data interface{}) error {
+func writeRPCError(c fiber.Ctx, id interface{}, code int, message string, data interface{}) error {
 	return c.Status(fiber.StatusOK).JSON(rpcResponse{
 		JSONRPC: "2.0",
-		Error:   &rpcError{Code: code, Message: msg, Data: data},
+		Error:   &rpcError{Code: code, Message: message, Data: data},
 		ID:      id,
 	})
 }
