@@ -75,4 +75,3 @@ To connect the backend to an MCP-compatible agent (e.g., GitHub Copilot in VS Co
 The agent will now have access to the registered tools, such as `salesforce_listAccounts` and `system_customer360`.
 
 ---
-*Engineered for enterprise integration and AI orchestration.*
