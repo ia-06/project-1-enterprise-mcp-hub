@@ -287,8 +287,8 @@ func (a *SalesforceAdapter) liveGetAccount(ctx context.Context, accountID string
 
 // sfQueryResponse is the JSON envelope returned by the Salesforce Query API.
 type sfQueryResponse struct {
-	TotalSize int                  `json:"totalSize"`
-	Done      bool                 `json:"done"`
+	TotalSize int                   `json:"totalSize"`
+	Done      bool                  `json:"done"`
 	Records   []sfAccountListRecord `json:"records"`
 }
 
@@ -370,4 +370,3 @@ func (a *SalesforceAdapter) liveListAccounts(ctx context.Context, limit int) ([]
 	}
 	return accounts, nil
 }
-

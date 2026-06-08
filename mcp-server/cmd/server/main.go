@@ -10,8 +10,8 @@ import (
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 	internalhttp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/http"
+	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 )
 
 func main() {
@@ -36,7 +36,6 @@ func main() {
 
 	accountCache := cache.NewSupabaseAccountCache(cfg)
 	sfAdapter := adapters.NewSalesforceAdapter(cfg, accountCache)
-
 
 	// ------------------------------------------------------------------
 	// 3. Instantiate the native MCP server and register tools.

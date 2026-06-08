@@ -22,10 +22,10 @@ import (
 // Server wraps the mcp-go MCPServer and holds references to the adapters
 // so that both MCP tools and the JSON-RPC handler share the same logic.
 type Server struct {
-	mcpServer  *server.MCPServer
-	salesRepo  adapters.SalesRepository
-	jiraAdp    *adapters.JiraAdapter
-	sfAdp      *adapters.SalesforceAdapter
+	mcpServer *server.MCPServer
+	salesRepo adapters.SalesRepository
+	jiraAdp   *adapters.JiraAdapter
+	sfAdp     *adapters.SalesforceAdapter
 }
 
 // NewMCPServer constructs the MCP server, registers all tools, and returns
@@ -315,7 +315,7 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 
 	wg.Add(3)
 
-	// 1. Fetch Salesforce Account 
+	// 1. Fetch Salesforce Account
 	go func() {
 		defer wg.Done()
 		acc, accErr = s.sfAdp.GetAccount(ctx, accountID)
@@ -369,7 +369,7 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 	hasClosedWon := false
 	closedLostCount := 0
 	summary := domain.SalesSummary{TotalClosedWonCents: 0, OpenPipelineCents: 0, OrderCount: 0}
-	
+
 	for _, o := range orders {
 		switch o.Status {
 		case "CLOSED_WON":

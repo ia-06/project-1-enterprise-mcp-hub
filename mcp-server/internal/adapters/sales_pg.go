@@ -176,4 +176,3 @@ func (r *nullSalesRepository) ListOrders(_ context.Context, _ string) ([]domain.
 func (r *nullSalesRepository) GetCustomerSummary(_ context.Context, _ string) (domain.SalesSummary, error) {
 	return domain.SalesSummary{}, ErrSalesUnavailable
 }
-

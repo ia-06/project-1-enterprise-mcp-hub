@@ -12,8 +12,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 )
 
 // ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.
 		if err != nil {
 			return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
 		}
-		
+
 		c360Bytes, _ := json.Marshal(c360)
 		return fiber.Map{
 			"content": []fiber.Map{

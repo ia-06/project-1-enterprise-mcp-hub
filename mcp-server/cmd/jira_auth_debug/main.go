@@ -54,7 +54,7 @@ func main() {
 	defer resp.Body.Close()
 
 	fmt.Printf("Response Status Code: %d (%s)\n", resp.StatusCode, resp.Status)
-	
+
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Error reading response body: %v\n", err)

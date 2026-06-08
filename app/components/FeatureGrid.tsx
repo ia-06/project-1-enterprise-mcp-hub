@@ -43,7 +43,7 @@ export default function FeatureGrid() {
       <div className="container">
         {/* Header */}
         <div className="section-header text-center" style={{ maxWidth: "600px", margin: "0 auto var(--space-3xl)" }}>
-          <div className="section-eyebrow">What's inside</div>
+          <div className="section-eyebrow">What&apos;s inside</div>
           <h2 className="display-lg" style={{ color: "var(--ink)", marginBottom: "var(--space-md)" }}>
             One middleware. Three live channels.
           </h2>
