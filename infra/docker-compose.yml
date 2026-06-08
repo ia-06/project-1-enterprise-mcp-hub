@@ -28,6 +28,25 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------
+  # MCP Server: Go backend implementing the Enterprise Hub
+  # ---------------------------------------------------------------
+  mcp_server:
+    build:
+      context: ../mcp-server
+    container_name: mcp_hub_server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - ../.env
+    environment:
+      # Override DB_URL to use Docker network instead of localhost
+      DB_URL: "postgres://postgres:postgres@postgres:5432/mcp_hub?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------
   # pgAdmin (optional): browser-based DB GUI for local dev
   # Accessible at http://localhost:5050
   # Default login: admin@mcp-hub.dev / admin

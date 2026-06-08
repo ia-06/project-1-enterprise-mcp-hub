@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -65,6 +66,7 @@ func (s *Server) registerTools() {
 	s.registerSalesTools()
 	s.registerJiraTools()
 	s.registerSalesforceTools()
+	s.registerSystemTools()
 	log.Println("[mcp] All tools registered successfully.")
 }
 
@@ -157,6 +159,25 @@ func (s *Server) registerSalesforceTools() {
 	})
 }
 
+func (s *Server) registerSystemTools() {
+	// system.customer360
+	c360Tool := mcpgo.NewTool("system.customer360",
+		mcpgo.WithDescription("Get a complete Customer 360 view by fetching Salesforce account, Jira tickets, and Postgres orders concurrently."),
+		mcpgo.WithString("accountId",
+			mcpgo.Required(),
+			mcpgo.Description("The Salesforce Account.Id (e.g. '001ACME000000001')."),
+		),
+	)
+	s.mcpServer.AddTool(c360Tool, func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		accountID := req.GetString("accountId", "")
+		c360, err := s.SystemCustomer360(ctx, accountID)
+		if err != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("system.customer360 failed: %v", err)), nil
+		}
+		return toolResultJSON(c360)
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Exposed methods — called by the JSON-RPC handler
 // These methods delegate to the same adapters as the MCP tools, ensuring
@@ -212,60 +233,183 @@ func (s *Server) SalesforceGetAccount(ctx context.Context, accountID string) (*d
 		return nil, err
 	}
 
+	var (
+		orders  []domain.SalesOrder
+		tickets []domain.JiraTicket
+		wg      sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		orders, _ = s.salesRepo.ListOrders(ctx, accountID)
+	}()
+	go func() {
+		defer wg.Done()
+		tickets, _ = s.jiraAdp.ListTicketsByAccount(ctx, accountID)
+	}()
+	wg.Wait()
+
 	// Calculate dynamic health score based on Postgres orders and Jira tickets
-	orders, err := s.salesRepo.ListOrders(ctx, accountID)
-	if err == nil {
-		tickets, err := s.jiraAdp.ListTicketsByAccount(ctx, accountID)
-		if err == nil {
-			score := 100.0
+	score := 100.0
 
-			// Active Jira Tickets impact: deduct based on priority
-			for _, t := range tickets {
-				statusLower := strings.ToLower(t.Status)
-				if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
-					prio := strings.ToLower(t.Priority)
-					if prio == "highest" || prio == "high" {
-						score -= 15.0
-					} else if prio == "medium" {
-						score -= 10.0
-					} else {
-						score -= 5.0
-					}
-				}
-			}
-
-			// Sales Orders impact:
-			hasClosedWon := false
-			closedLostCount := 0
-			for _, o := range orders {
-				if o.Status == "CLOSED_WON" {
-					hasClosedWon = true
-				} else if o.Status == "CLOSED_LOST" {
-					closedLostCount++
-				}
-			}
-
-			// Deduct if the account has no sales footprint
-			if len(orders) == 0 {
+	// Active Jira Tickets impact: deduct based on priority
+	for _, t := range tickets {
+		statusLower := strings.ToLower(t.Status)
+		if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
+			prio := strings.ToLower(t.Priority)
+			if prio == "highest" || prio == "high" {
+				score -= 15.0
+			} else if prio == "medium" {
 				score -= 10.0
-			} else if !hasClosedWon {
+			} else {
 				score -= 5.0
 			}
-
-			// Deduct for cancelled/lost deals
-			score -= float64(closedLostCount) * 5.0
-
-			if score < 0 {
-				score = 0
-			}
-			if score > 100 {
-				score = 100
-			}
-			acc.HealthScore = score
 		}
 	}
 
+	// Sales Orders impact:
+	hasClosedWon := false
+	closedLostCount := 0
+	for _, o := range orders {
+		if o.Status == "CLOSED_WON" {
+			hasClosedWon = true
+		} else if o.Status == "CLOSED_LOST" {
+			closedLostCount++
+		}
+	}
+
+	// Deduct if the account has no sales footprint
+	if len(orders) == 0 {
+		score -= 10.0
+	} else if !hasClosedWon {
+		score -= 5.0
+	}
+
+	// Deduct for cancelled/lost deals
+	score -= float64(closedLostCount) * 5.0
+
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	acc.HealthScore = score
+
 	return acc, nil
+}
+
+// SystemCustomer360 fetches the Salesforce account, Jira tickets, and Postgres orders concurrently.
+// It computes the health score internally to avoid double-fetching.
+func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber_Map, error) {
+	var (
+		acc     *domain.Account
+		tickets []domain.JiraTicket
+		orders  []domain.SalesOrder
+		accErr  error
+		wg      sync.WaitGroup
+	)
+
+	wg.Add(3)
+
+	// 1. Fetch Salesforce Account 
+	go func() {
+		defer wg.Done()
+		acc, accErr = s.sfAdp.GetAccount(ctx, accountID)
+	}()
+
+	// 2. Fetch Jira Tickets
+	go func() {
+		defer wg.Done()
+		tickets, _ = s.jiraAdp.ListTicketsByAccount(ctx, accountID)
+	}()
+
+	// 3. Fetch Postgres Orders
+	go func() {
+		defer wg.Done()
+		orders, _ = s.salesRepo.ListOrders(ctx, accountID)
+	}()
+
+	wg.Wait()
+
+	if accErr != nil {
+		return nil, fmt.Errorf("salesforce unreachable: %w", accErr)
+	}
+
+	if tickets == nil {
+		tickets = []domain.JiraTicket{}
+	}
+	if orders == nil {
+		orders = []domain.SalesOrder{}
+	}
+
+	// Calculate dynamic health score based on Postgres orders and Jira tickets
+	score := 100.0
+
+	// Active Jira Tickets impact: deduct based on priority
+	for _, t := range tickets {
+		statusLower := strings.ToLower(t.Status)
+		if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
+			prio := strings.ToLower(t.Priority)
+			if prio == "highest" || prio == "high" {
+				score -= 15.0
+			} else if prio == "medium" {
+				score -= 10.0
+			} else {
+				score -= 5.0
+			}
+		}
+	}
+
+	// Sales Orders impact:
+	hasClosedWon := false
+	closedLostCount := 0
+	summary := domain.SalesSummary{TotalClosedWonCents: 0, OpenPipelineCents: 0, OrderCount: 0}
+	
+	for _, o := range orders {
+		if o.Status == "CLOSED_WON" {
+			hasClosedWon = true
+			summary.TotalClosedWonCents += o.AmountCents
+		} else if o.Status == "CLOSED_LOST" {
+			closedLostCount++
+		} else if o.Status == "OPEN" || o.Status == "PENDING" {
+			summary.OpenPipelineCents += o.AmountCents
+		}
+		summary.OrderCount++
+	}
+
+	// Deduct if the account has no sales footprint
+	if len(orders) == 0 {
+		score -= 10.0
+	} else if !hasClosedWon {
+		score -= 5.0
+	}
+
+	// Deduct for cancelled/lost deals
+	score -= float64(closedLostCount) * 5.0
+
+	if score < 0 {
+		score = 0
+	}
+	if score > 100 {
+		score = 100
+	}
+	acc.HealthScore = score
+
+	// Build the response to perfectly match Customer360 DTO of the frontend
+	return fiber_Map{
+		"account": acc,
+		"sales": fiber_Map{
+			"summary": summary,
+			"orders":  orders,
+		},
+		"tickets": tickets,
+		"meta": fiber_Map{
+			"salesforceSource": acc.Source,
+			"jiraMock":         true, // Dev environment
+		},
+	}, nil
 }
 
 // SalesforceListAccounts delegates to the Salesforce adapter SOQL query.
