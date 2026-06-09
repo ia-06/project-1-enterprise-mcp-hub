@@ -175,6 +175,10 @@ func (r *nullSalesRepository) Ping(_ context.Context) error {
 	return ErrSalesUnavailable
 }
 
+func (r *nullSalesRepository) Pool() *pgxpool.Pool {
+	return nil
+}
+
 func (r *nullSalesRepository) ListOrders(_ context.Context, _ string) ([]domain.SalesOrder, error) {
 	return nil, ErrSalesUnavailable
 }

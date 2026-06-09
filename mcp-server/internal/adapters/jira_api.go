@@ -199,7 +199,7 @@ func (a *JiraAdapter) resolveFieldKey(ctx context.Context) string {
 }
 
 // buildJQL constructs the JQL query string for the given accountSFID.
-func (a *JiraAdapter) buildJQL(ctx context.Context, accountSFID string) string {
+func (a *JiraAdapter) buildJQL(accountSFID string) string {
 	fieldName := a.cfg.JiraSFAccountField
 	if fieldName != "" && accountSFID != "" {
 		// Jira Cloud JQL accepts quoted field names for custom fields.
@@ -247,16 +247,10 @@ type jiraPriority struct {
 }
 
 func (a *JiraAdapter) liveListTickets(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
-	jql := a.buildJQL(ctx, accountSFID)
+	jql := a.buildJQL(accountSFID)
 	return a.execJQL(ctx, jql, accountSFID)
 }
 
-// liveProjectTickets queries all issues in the configured project, used as a
-// fallback when the SF-account-scoped query returns no results.
-func (a *JiraAdapter) liveProjectTickets(ctx context.Context, accountSFID string) ([]domain.JiraTicket, error) {
-	jql := fmt.Sprintf(`project = "%s" ORDER BY updated DESC`, a.cfg.JiraProjectKey)
-	return a.execJQL(ctx, jql, accountSFID)
-}
 
 // execJQL executes a JQL search and normalises the results into JiraTicket structs.
 func (a *JiraAdapter) execJQL(ctx context.Context, jql string, accountSFID string) ([]domain.JiraTicket, error) {

@@ -81,7 +81,45 @@
 
   /* Max content width */
   --page-width: 1200px;
+  /* Max content width */
+  --page-width: 1200px;
 }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surface */
+    --canvas:        #000000;
+    --canvas-soft:   #0a0a0a;
+    --canvas-soft-2: #141414;
+
+    /* Ink / Text */
+    --ink:           #ededed;
+    --body:          #a1a1a1;
+    --mute:          #888888;
+    --on-primary:    #ffffff;
+
+    /* Borders */
+    --hairline:      #333333;
+    --hairline-strong: #444444;
+
+    /* Elevation shadows */
+    --shadow-1: inset 0 0 0 1px rgba(255,255,255,0.14);
+    --shadow-2: 0px 1px 1px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.14);
+    --shadow-3: 0px 2px 2px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.14);
+    --shadow-4: 0px 4px 4px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.14);
+    --shadow-5: 0px 8px 8px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.14);
+
+    /* Semantic (soft backgrounds) */
+    --link-bg-soft:  rgba(0, 112, 243, 0.15);
+    --error-soft:    rgba(238, 0, 0, 0.15);
+    --warning-soft:  rgba(245, 166, 35, 0.15);
+    
+    /* Adjusted semantic colors for dark mode contrast */
+    --link:          #3291ff;
+    --link-deep:     #0070f3;
+  }
+}
+
 
 /* ----------------------------------------------------------------
    Reset & Base
@@ -102,6 +140,7 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   scroll-behavior: smooth;
+  color-scheme: light dark;
 }
 
 body {

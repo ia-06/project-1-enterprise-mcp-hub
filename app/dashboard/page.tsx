@@ -511,18 +511,18 @@ export default function DashboardPage() {
 
       {/* Seed Modal */}
       {showSeedModal && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-          <div style={{ background: "#1e1e1e", padding: "32px", borderRadius: "12px", maxWidth: "500px", border: "1px solid rgba(255,255,255,0.1)" }}>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+          <div style={{ background: "var(--canvas)", padding: "var(--space-xl)", borderRadius: "var(--r-lg)", maxWidth: "500px", border: "1px solid var(--hairline)", boxShadow: "var(--shadow-5)" }}>
             <h2 style={{ display: "flex", alignItems: "center", gap: "8px", margin: "0 0 16px 0" }}>
-              <span style={{ color: "#2da562" }}>●</span> Recommended: Populate Synthetic Data
+              <span style={{ color: "var(--success)" }}>●</span> Recommended: Populate Synthetic Data
             </h2>
             <p style={{ color: "var(--mute)", lineHeight: 1.5, marginBottom: "24px" }}>
               Are you sure you want to populate synthetic data (Orders, MRR, Tickets) for all Salesforce accounts? 
               <br/><br/>
-              <strong style={{ color: "#ff4444" }}>WARNING:</strong> This will wipe out any existing orders and Jira tickets across your project to provide a fresh, heavily-populated dataset for the MCP Agent to analyze.
+              <strong style={{ color: "var(--error)" }}>WARNING:</strong> This will wipe out any existing orders and Jira tickets across your project to provide a fresh, heavily-populated dataset for the MCP Agent to analyze.
             </p>
             <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
-              <button className="mcp-button" style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)" }} onClick={() => setShowSeedModal(false)}>
+              <button className="mcp-button" style={{ background: "transparent", border: "1px solid var(--hairline)", color: "var(--ink)" }} onClick={() => setShowSeedModal(false)}>
                 Cancel
               </button>
               <button className="mcp-button" onClick={handleSeedData} disabled={isSeeding}>
