@@ -119,6 +119,11 @@ export default function DashboardPage() {
   const [loadingDetail, setLoadingDetail]     = useState(false);
   const [error, setError]               = useState<string | null>(null);
 
+  // -- Seeder State --
+  const [showSeedModal, setShowSeedModal] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [hasPromptedSeed, setHasPromptedSeed] = useState(false);
+
   // -- Load health + account list on mount --
   useEffect(() => {
     Promise.all([
@@ -168,11 +173,36 @@ export default function DashboardPage() {
 
   // Load orders when orders tab is active
   useEffect(() => {
-    if (tab !== "orders" || !selected || orders.length > 0) return;
+    if (tab !== "orders" || !selected) return;
+    if (orders.length > 0) return;
     rpc<{ orders: SalesOrder[] }>("sales.listOrders", { customerId: selected.id })
-      .then((r) => setOrders(r.orders ?? []))
+      .then((r) => {
+        const fetchedOrders = r.orders ?? [];
+        setOrders(fetchedOrders);
+        // Auto-prompt seeding if no orders exist
+        if (fetchedOrders.length === 0 && !hasPromptedSeed) {
+          setShowSeedModal(true);
+          setHasPromptedSeed(true);
+        }
+      })
       .catch(() => {});
-  }, [tab, selected, orders.length]);
+  }, [tab, selected, orders.length, hasPromptedSeed]);
+
+  // Handle manual seed trigger
+  const handleSeedData = async () => {
+    setIsSeeding(true);
+    try {
+      await fetch((process.env.NEXT_PUBLIC_GO_RPC_URL || "http://localhost:8080/rpc").replace("/rpc", "/api/seed"), {
+        method: "POST",
+      });
+      setShowSeedModal(false);
+      alert("Seeding process started in the background! It may take a minute. Please refresh the page shortly.");
+    } catch (e) {
+      alert("Failed to start seeding.");
+    } finally {
+      setIsSeeding(false);
+    }
+  };
 
   // -- Render --
   return (
@@ -204,11 +234,20 @@ export default function DashboardPage() {
       <div className="dashboard-layout">
         {/* ── Sidebar ── */}
         <aside className="dashboard-sidebar">
-          <div className="sidebar-header">
-            <div className="sidebar-label">Salesforce Accounts</div>
-            <p className="caption" style={{ color: "var(--mute)" }}>
-              {loadingAccounts ? "Loading..." : `${accounts.length} accounts`}
-            </p>
+          <div className="sidebar-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div className="sidebar-label">Salesforce Accounts</div>
+              <p className="caption" style={{ color: "var(--mute)" }}>
+                {loadingAccounts ? "Loading..." : `${accounts.length} accounts`}
+              </p>
+            </div>
+            <button 
+              className="mcp-button" 
+              style={{ padding: "4px 8px", fontSize: "11px", background: "rgba(255,255,255,0.1)" }}
+              onClick={() => setShowSeedModal(true)}
+            >
+              Populate Data
+            </button>
           </div>
 
           <div className="account-list">
@@ -469,6 +508,30 @@ export default function DashboardPage() {
           )}
         </main>
       </div>
+
+      {/* Seed Modal */}
+      {showSeedModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+          <div style={{ background: "#1e1e1e", padding: "32px", borderRadius: "12px", maxWidth: "500px", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <h2 style={{ display: "flex", alignItems: "center", gap: "8px", margin: "0 0 16px 0" }}>
+              <span style={{ color: "#2da562" }}>●</span> Recommended: Populate Synthetic Data
+            </h2>
+            <p style={{ color: "var(--mute)", lineHeight: 1.5, marginBottom: "24px" }}>
+              Are you sure you want to populate synthetic data (Orders, MRR, Tickets) for all Salesforce accounts? 
+              <br/><br/>
+              <strong style={{ color: "#ff4444" }}>WARNING:</strong> This will wipe out any existing orders and Jira tickets across your project to provide a fresh, heavily-populated dataset for the MCP Agent to analyze.
+            </p>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button className="mcp-button" style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.2)" }} onClick={() => setShowSeedModal(false)}>
+                Cancel
+              </button>
+              <button className="mcp-button" onClick={handleSeedData} disabled={isSeeding}>
+                {isSeeding ? "Seeding..." : "Yes, Populate Orders"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

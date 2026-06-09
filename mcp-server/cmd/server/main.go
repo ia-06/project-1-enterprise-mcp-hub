@@ -64,6 +64,7 @@ func main() {
 	fiberApp := internalhttp.NewServer(cfg)
 	internalhttp.RegisterJSONRPCHandler(fiberApp, cfg, mcpServer)
 	internalhttp.RegisterHealthRoutes(fiberApp, cfg, salesRepo, jiraAdapter, sfAdapter)
+	internalhttp.RegisterSeedRoute(fiberApp, sfAdapter, jiraAdapter, salesRepo)
 
 	log.Printf("[mcp-hub] Starting HTTP server on %s (env=%s)", cfg.HTTPAddr, cfg.GoEnv)
 	if err := fiberApp.Listen(cfg.HTTPAddr); err != nil {

@@ -23,6 +23,7 @@ type SalesRepository interface {
 	ListOrders(ctx context.Context, customerID string) ([]domain.SalesOrder, error)
 	GetCustomerSummary(ctx context.Context, customerID string) (domain.SalesSummary, error)
 	Ping(ctx context.Context) error
+	Pool() *pgxpool.Pool
 }
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,11 @@ func NewSalesRepository(cfg config.Config) (SalesRepository, error) {
 // Ping checks database connectivity for health probes.
 func (r *pgSalesRepository) Ping(ctx context.Context) error {
 	return r.pool.Ping(ctx)
+}
+
+// Pool returns the underlying pgxpool connection pool.
+func (r *pgSalesRepository) Pool() *pgxpool.Pool {
+	return r.pool
 }
 
 // ListOrders returns all sales orders, optionally filtered by customerID.
@@ -92,10 +98,10 @@ func (r *pgSalesRepository) GetCustomerSummary(ctx context.Context, customerID s
 	var c domain.Customer
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, COALESCE(external_sf_id, ''), name,
-		       COALESCE(industry, ''), created_at
+		       COALESCE(industry, ''), COALESCE(mrr_cents, 0), created_at
 		FROM   customers
 		WHERE  external_sf_id = $1 OR CAST(id AS TEXT) = $1
-	`, customerID).Scan(&c.ID, &c.ExternalSFID, &c.Name, &c.Industry, &c.CreatedAt)
+	`, customerID).Scan(&c.ID, &c.ExternalSFID, &c.Name, &c.Industry, &c.MRRCents, &c.CreatedAt)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

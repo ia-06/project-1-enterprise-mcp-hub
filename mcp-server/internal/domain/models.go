@@ -17,6 +17,7 @@ type Customer struct {
 	ExternalSFID string    `json:"externalSfId,omitempty"`
 	Name         string    `json:"name"`
 	Industry     string    `json:"industry,omitempty"`
+	MRRCents     int64     `json:"mrrCents"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
 

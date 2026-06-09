@@ -176,6 +176,23 @@ func (s *Server) registerSystemTools() {
 		}
 		return toolResultJSON(c360)
 	})
+
+	// system.accountMetrics
+	metricsTool := mcpgo.NewTool("system.accountMetrics",
+		mcpgo.WithDescription("Calculates advanced statistical metrics (MRR, ticket-to-order ratio, churn risk) for an account."),
+		mcpgo.WithString("accountId",
+			mcpgo.Required(),
+			mcpgo.Description("The Salesforce Account.Id (e.g. '001ACME000000001')."),
+		),
+	)
+	s.mcpServer.AddTool(metricsTool, func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+		accountID := req.GetString("accountId", "")
+		metrics, err := s.SystemAccountMetrics(ctx, accountID)
+		if err != nil {
+			return mcpgo.NewToolResultError(fmt.Sprintf("system.accountMetrics failed: %v", err)), nil
+		}
+		return toolResultJSON(metrics)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -346,41 +363,49 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 		orders = []domain.SalesOrder{}
 	}
 
-	// Calculate dynamic health score based on Postgres orders and Jira tickets
-	score := 100.0
-
-	// Active Jira Tickets impact: deduct based on priority
-	for _, t := range tickets {
-		statusLower := strings.ToLower(t.Status)
-		if statusLower != "done" && statusLower != "closed" && statusLower != "resolved" {
-			prio := strings.ToLower(t.Priority)
-			switch prio {
-			case "highest", "high":
-				score -= 15.0
-			case "medium":
-				score -= 10.0
-			default:
-				score -= 5.0
-			}
-		}
-	}
-
-	// Sales Orders impact:
+	// Calculate summary and orders impact
 	hasClosedWon := false
 	closedLostCount := 0
-	summary := domain.SalesSummary{TotalClosedWonCents: 0, OpenPipelineCents: 0, OrderCount: 0}
+	
+	// Fetch Customer Summary to get MRR and Orders from DB directly (Wait, we already fetched orders)
+	// We need MRRCents. Since we didn't fetch it in orders, let's fetch summary directly using GetCustomerSummary.
+	summary, err := s.salesRepo.GetCustomerSummary(ctx, accountID)
+	if err != nil {
+		// fallback to empty
+		summary = domain.SalesSummary{}
+	}
+
+	// Calculate dynamic health score based on Postgres orders, MRR, and Jira tickets
+	score := 50.0
 
 	for _, o := range orders {
 		switch o.Status {
 		case "CLOSED_WON":
 			hasClosedWon = true
-			summary.TotalClosedWonCents += o.AmountCents
+			score += 1.0 // +1 pt for every closed won order (max 20 pts from orders typically)
 		case "CLOSED_LOST":
 			closedLostCount++
-		case "OPEN", "PENDING":
-			summary.OpenPipelineCents += o.AmountCents
 		}
-		summary.OrderCount++
+	}
+
+	// MRR Impact: Add up to 30 points for high MRR (cap at $50k MRR = 30 pts)
+	mrrImpact := float64(summary.Customer.MRRCents) / 100.0 / 50000.0 * 30.0
+	if mrrImpact > 30.0 {
+		mrrImpact = 30.0
+	}
+	score += mrrImpact
+
+	// Active Jira Tickets impact: deduct based on custom workflow status
+	for _, t := range tickets {
+		statusLower := strings.ToLower(t.Status)
+		switch statusLower {
+		case "build broken", "reopened":
+			score -= 15.0 // Massive penalty for failing architecture or churn
+		case "todo", "in progress", "building":
+			score -= 5.0  // Moderate penalty for workload friction
+		case "done":
+			score += 2.0  // Slight reward for completion velocity
+		}
 	}
 
 	// Deduct if the account has no sales footprint
@@ -400,6 +425,7 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 		score = 100
 	}
 	acc.HealthScore = score
+	acc.MRRCents = summary.Customer.MRRCents
 
 	// Build the response to perfectly match Customer360 DTO of the frontend
 	return fiber_Map{
@@ -419,6 +445,55 @@ func (s *Server) SystemCustomer360(ctx context.Context, accountID string) (fiber
 // SalesforceListAccounts delegates to the Salesforce adapter SOQL query.
 func (s *Server) SalesforceListAccounts(ctx context.Context, limit int) ([]domain.Account, error) {
 	return s.sfAdp.ListAccounts(ctx, limit)
+}
+
+// SystemAccountMetrics returns pre-calculated statistics to prevent the LLM from doing basic arithmetic.
+func (s *Server) SystemAccountMetrics(ctx context.Context, accountID string) (fiber_Map, error) {
+	summary, err := s.salesRepo.GetCustomerSummary(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	tickets, err := s.jiraAdp.ListTicketsByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+
+	totalTickets := len(tickets)
+	brokenOrReopened := 0
+	for _, t := range tickets {
+		status := strings.ToLower(t.Status)
+		if status == "build broken" || status == "reopened" {
+			brokenOrReopened++
+		}
+	}
+
+	brokenPercentage := 0.0
+	if totalTickets > 0 {
+		brokenPercentage = (float64(brokenOrReopened) / float64(totalTickets)) * 100.0
+	}
+
+	ticketToOrderRatio := 0.0
+	if summary.OrderCount > 0 {
+		ticketToOrderRatio = float64(totalTickets) / float64(summary.OrderCount)
+	}
+
+	averageOrderValueCents := 0.0
+	if summary.OrderCount > 0 {
+		// Approximating AOV by summing all closed_won and open_pipeline
+		total := summary.TotalClosedWonCents + summary.OpenPipelineCents
+		averageOrderValueCents = float64(total) / float64(summary.OrderCount)
+	}
+
+	return fiber_Map{
+		"metrics": fiber_Map{
+			"mrrCents":                  summary.Customer.MRRCents,
+			"averageOrderValueCents":    averageOrderValueCents,
+			"totalTickets":              totalTickets,
+			"brokenOrReopenedTickets":   brokenOrReopened,
+			"brokenTicketPercentage":    brokenPercentage,
+			"ticketToOrderRatio":        ticketToOrderRatio,
+		},
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
