@@ -8,12 +8,12 @@ import (
 	"flag"
 	"log"
 
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	internalhttp "github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/http"
+	internalmcp "github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	internalhttp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/http"
-	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 )
 
 func main() {

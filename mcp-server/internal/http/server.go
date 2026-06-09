@@ -10,7 +10,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/gofiber/fiber/v3/middleware/requestid"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
 )
 
 // NewServer creates and configures the Fiber application with all

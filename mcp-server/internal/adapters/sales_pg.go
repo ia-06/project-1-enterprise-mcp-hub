@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
 )
 
 // ---------------------------------------------------------------------------

@@ -24,8 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
 )
 
 // JiraAdapter wraps the Jira Cloud REST API and normalises responses

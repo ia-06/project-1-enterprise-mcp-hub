@@ -14,9 +14,9 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
 )
 
 // Server wraps the mcp-go MCPServer and holds references to the adapters

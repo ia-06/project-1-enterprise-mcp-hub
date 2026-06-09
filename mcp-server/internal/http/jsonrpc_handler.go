@@ -10,10 +10,10 @@ import (
 	"log"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
-	internalmcp "github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	internalmcp "github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/mcp"
 )
 
 // ---------------------------------------------------------------------------
@@ -538,15 +538,6 @@ func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
-
-// writeRPCError writes a spec-compliant JSON-RPC 2.0 error body with HTTP 200.
-func writeRPCError(c fiber.Ctx, id interface{}, code int, message string, data interface{}) error {
-	return c.Status(fiber.StatusOK).JSON(rpcResponse{
-		JSONRPC: "2.0",
-		Error:   &rpcError{Code: code, Message: message, Data: data},
-		ID:      id,
-	})
-}
 
 // mapAdapterError converts a generic adapter error into an rpcError using
 // the provided application-layer code and message.

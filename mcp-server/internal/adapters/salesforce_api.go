@@ -36,9 +36,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/config"
-	"github.com/your-org/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/config"
+	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/domain"
 )
 
 // ErrSalesforceUnavailable is the sentinel error returned when Salesforce is

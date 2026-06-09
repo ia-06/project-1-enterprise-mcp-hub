@@ -1,4 +1,4 @@
-module github.com/your-org/project-1-enterprise-mcp-hub/mcp-server
+module github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server
 
 go 1.26.4
 

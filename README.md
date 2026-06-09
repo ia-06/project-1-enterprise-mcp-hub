@@ -33,7 +33,7 @@ The following guide outlines the standard procedure to deploy the infrastructure
 
 ### Step 1: Clone the Repository
 ```bash
-git clone https://github.com/your-org/project-1-enterprise-mcp-hub.git
+git clone https://github.com/ia-06/project-1-enterprise-mcp-hub.git
 cd project-1-enterprise-mcp-hub
 ```
 

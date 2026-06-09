@@ -118,7 +118,7 @@ project-1-enterprise-mcp-hub/
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-org/project-1-enterprise-mcp-hub.git
+git clone https://github.com/ia-06/project-1-enterprise-mcp-hub.git
 cd project-1-enterprise-mcp-hub
 ```
 
@@ -132,7 +132,7 @@ npm install
 ```bash
 # Initialize Go module for MCP server
 cd mcp-server
-go mod init github.com/your-org/project-1-enterprise-mcp-hub/mcp-server
+go mod init github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server
 
 # Core dependencies
 go get github.com/gofiber/fiber/v3
