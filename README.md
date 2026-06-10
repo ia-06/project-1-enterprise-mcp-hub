@@ -11,17 +11,17 @@ flowchart TD
     Agent["AI Agent (Claude/Cursor)"]
     UI["Next.js App Router UI"]
 
-    subgraph Enterprise MCP Hub (Go Middleware)
+    subgraph Hub["Enterprise MCP Hub (Go Middleware)"]
         direction TB
         RPC["JSON-RPC 2.0 Router"]
         MCP["MCP Interface Layer"]
         
-        subgraph Concurrency Engine
+        subgraph Concurrency["Concurrency Engine"]
             Batch["Batch Orchestrator"]
             Metrics["Metrics & Insights Engine"]
         end
 
-        subgraph Adapters
+        subgraph Adapters["Adapters"]
             AdapterSF["Salesforce API Adapter"]
             AdapterJira["Jira REST Adapter"]
             RepoSales["Postgres/Supabase Repository"]
