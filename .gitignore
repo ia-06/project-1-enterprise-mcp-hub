@@ -19,6 +19,7 @@ pnpm-debug.log*
 # ===========================
 mcp-server/bin/
 mcp-server/*.exe
+mcp-server/mcp-hub
 mcp-server/*.test
 mcp-server/vendor/
 *.o

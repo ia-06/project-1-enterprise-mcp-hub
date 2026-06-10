@@ -66,32 +66,26 @@ const METHODS = [
   },
 ];
 
-const STEP_1 = `# Stdio mode (Claude/Cursor)
-cd mcp-server
-go run ./cmd/server -mode=stdio
+const STEP_1 = `# Compile the Go binary (Crucial for stdio)
+npm run build:mcp
 
-# HTTP mode (VS Code Copilot)
-go run ./cmd/server -mode=http`;
+# The binary is now ready at:
+# ./mcp-server/mcp-hub.exe (Windows)
+# ./mcp-server/mcp-hub (Mac/Linux)`;
 
-const STEP_2 = `# Claude Desktop / Cursor (stdio)
+const STEP_2 = `# Cursor / Claude / Windsurf (stdio)
 {
   "mcpServers": {
     "enterprise-hub": {
-      "command": "go",
-      "args": ["run", "./cmd/server", "-mode=stdio"]
+      "command": "/absolute/path/to/mcp-server/mcp-hub",
+      "args": ["-mode=stdio"],
+      "cwd": "/absolute/path/to/project-1-enterprise-mcp-hub"
     }
   }
 }
 
-# VS Code Copilot (http)
-{
-  "mcpServers": {
-    "enterprise-hub": {
-      "url": "http://localhost:8080/rpc",
-      "type": "http"
-    }
-  }
-}`;
+# DO NOT use "go run" in the command! 
+# Go compiler stdout logs will fatally corrupt JSON-RPC.`;
 
 const STEP_3 = `# Call tool via MCP Protocol
 {
@@ -137,8 +131,8 @@ export default function McpDocsSection() {
         <div className="mcp-step-grid">
           <div className="mcp-step-card">
             <div className="mcp-step-num">STEP 01</div>
-            <h3>Launch the Server</h3>
-            <p>Start the binary in stdio mode for local desktop agents, or http for remote/VS Code integrations.</p>
+            <h3>Compile the Binary</h3>
+            <p>Always compile the server before connecting your agent. Relying on <code>go run</code> can pollute stdout and fatally corrupt the JSON-RPC handshake.</p>
             <div className="mcp-code">
               <pre>{STEP_1}</pre>
             </div>
@@ -147,7 +141,7 @@ export default function McpDocsSection() {
           <div className="mcp-step-card">
             <div className="mcp-step-num">STEP 02</div>
             <h3>Configure your Agent</h3>
-            <p>Add the server to your agent&apos;s MCP configuration JSON file. The agent will auto-discover tools upon connection.</p>
+            <p>Provide the absolute path to the compiled binary in your IDE&apos;s MCP configuration. The agent will auto-discover tools upon connection.</p>
             <div className="mcp-code">
               <pre>{STEP_2}</pre>
             </div>

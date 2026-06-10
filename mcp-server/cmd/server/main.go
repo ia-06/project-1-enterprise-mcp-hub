@@ -49,7 +49,14 @@ func main() {
 	mcpServer := internalmcp.NewMCPServer(cfg, salesRepo, jiraAdapter, sfAdapter)
 
 	// ------------------------------------------------------------------
-	// 4. Branch based on mode
+	// 4. Start Background Cache Syncer (Startup + 30m intervals)
+	// ------------------------------------------------------------------
+	// This pulls live data automatically to populate Supabase and ensure
+	// the resilience degraded state serves fully enriched data.
+	mcpServer.StartCacheSyncer(context.Background(), 30*time.Minute)
+
+	// ------------------------------------------------------------------
+	// 5. Branch based on mode
 	// ------------------------------------------------------------------
 	if *mode == "stdio" {
 		log.Printf("[mcp-hub] Starting MCP server in STDIO mode...")
@@ -59,13 +66,6 @@ func main() {
 		}
 		return
 	}
-
-	// ------------------------------------------------------------------
-	// 5. Start Background Cache Syncer (Startup + 30m intervals)
-	// ------------------------------------------------------------------
-	// This pulls live data automatically to populate Supabase and ensure
-	// the resilience degraded state serves fully enriched data.
-	mcpServer.StartCacheSyncer(context.Background(), 30*time.Minute)
 
 	// ------------------------------------------------------------------
 	// 6. Instantiate and start the Fiber HTTP application.

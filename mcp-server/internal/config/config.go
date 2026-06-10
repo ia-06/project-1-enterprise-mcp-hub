@@ -7,6 +7,7 @@ package config
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -66,7 +67,19 @@ func Load() Config {
 	// finds the .env that lives at the project root. Production systems supply
 	// real env vars directly and this lookup is a no-op.
 	loaded := false
-	for _, candidate := range []string{".env", "../.env", "../../.env"} {
+	candidates := []string{".env", "../.env", "../../.env"}
+
+	// If launched globally by an IDE, checking relative to the executable path is robust
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates,
+			filepath.Join(exeDir, ".env"),
+			filepath.Join(exeDir, "..", ".env"),
+			filepath.Join(exeDir, "..", "..", ".env"),
+		)
+	}
+
+	for _, candidate := range candidates {
 		if err := godotenv.Load(candidate); err == nil {
 			log.Printf("[config] Loaded environment from %s", candidate)
 			loaded = true
