@@ -18,6 +18,7 @@ type Customer struct {
 	Name         string    `json:"name"`
 	Industry     string    `json:"industry,omitempty"`
 	MRRCents     int64     `json:"mrrCents"`
+	ApiLimit     int       `json:"apiLimit"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
@@ -60,15 +61,22 @@ type JiraTicket struct {
 // Salesforce / Account domain
 // ---------------------------------------------------------------------------
 
+// CacheTicket represents a minimal Jira ticket projection stored in the cache.
+type CacheTicket struct {
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
 // Account normalises a Salesforce Account sobject (or its cache snapshot).
 type Account struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`
 	Tier        string  `json:"tier"`
 	MRRCents    int64   `json:"mrrCents"`
-	HealthScore float64 `json:"healthScore"`
-	Owner       string  `json:"owner"`
-	Industry    string  `json:"industry"`
+	HealthScore float64       `json:"healthScore"`
+	Owner       string        `json:"owner"`
+	Industry    string        `json:"industry"`
+	Tickets     []CacheTicket `json:"tickets,omitempty"`
 	// Source is set to "cache" when this record came from the Supabase
 	// fallback cache rather than a live Salesforce API call.
 	Source string `json:"source,omitempty"` // "live" | "cache"

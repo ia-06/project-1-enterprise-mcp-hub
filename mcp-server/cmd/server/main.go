@@ -5,8 +5,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
+	"time"
 
 	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
 	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/cache"
@@ -59,7 +61,14 @@ func main() {
 	}
 
 	// ------------------------------------------------------------------
-	// 5. Instantiate and start the Fiber HTTP application.
+	// 5. Start Background Cache Syncer (Startup + 30m intervals)
+	// ------------------------------------------------------------------
+	// This pulls live data automatically to populate Supabase and ensure
+	// the resilience degraded state serves fully enriched data.
+	mcpServer.StartCacheSyncer(context.Background(), 30*time.Minute)
+
+	// ------------------------------------------------------------------
+	// 6. Instantiate and start the Fiber HTTP application.
 	// ------------------------------------------------------------------
 	fiberApp := internalhttp.NewServer(cfg)
 	internalhttp.RegisterJSONRPCHandler(fiberApp, cfg, mcpServer)

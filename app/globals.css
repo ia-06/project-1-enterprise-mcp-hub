@@ -3,7 +3,7 @@
    Based on Vercel design language (DESIGN.md)
    ================================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&display=swap');
 
 /* ----------------------------------------------------------------
    Design Tokens
@@ -85,18 +85,18 @@
   --page-width: 1200px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Surface */
-    --canvas:        #000000;
-    --canvas-soft:   #0a0a0a;
-    --canvas-soft-2: #141414;
+[data-theme="dark"] {
+  /* Surface */
+  --canvas:        #000000;
+  --canvas-soft:   #0a0a0a;
+  --canvas-soft-2: #141414;
+  --nav-bg:        rgba(0, 0, 0, 0.92);
 
     /* Ink / Text */
     --ink:           #ededed;
     --body:          #a1a1a1;
     --mute:          #888888;
-    --on-primary:    #ffffff;
+    --on-primary:    #000000;
 
     /* Borders */
     --hairline:      #333333;
@@ -114,10 +114,9 @@
     --error-soft:    rgba(238, 0, 0, 0.15);
     --warning-soft:  rgba(245, 166, 35, 0.15);
     
-    /* Adjusted semantic colors for dark mode contrast */
-    --link:          #3291ff;
-    --link-deep:     #0070f3;
-  }
+  /* Adjusted semantic colors for dark mode contrast */
+  --link:          #3291ff;
+  --link-deep:     #0070f3;
 }
 
 
@@ -144,7 +143,7 @@ html {
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Google Sans', 'Product Sans', system-ui, -apple-system, sans-serif;
   background: var(--canvas-soft);
   color: var(--ink);
   line-height: 1.5;
@@ -354,7 +353,7 @@ img, svg {
   top: 0;
   z-index: 100;
   height: var(--nav-height);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--nav-bg, rgba(255, 255, 255, 0.92));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--hairline);
@@ -423,6 +422,8 @@ img, svg {
               radial-gradient(ellipse at 80% 50%, rgba(0,223,216,0.18) 0%, transparent 55%),
               radial-gradient(ellipse at 50% 0%, rgba(121,40,202,0.15) 0%, transparent 55%),
               radial-gradient(ellipse at 60% 30%, rgba(255,0,128,0.12) 0%, transparent 45%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
   pointer-events: none;
 }
 .hero-badge {
@@ -483,10 +484,23 @@ img, svg {
 }
 .section-soft { background: var(--canvas-soft); }
 .section-dark {
-  background: var(--ink);
-  color: var(--on-primary);
+  /* Enforce dark context */
+  --ink: #ffffff;
+  --body: rgba(255, 255, 255, 0.7);
+  --mute: rgba(255, 255, 255, 0.45);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline-strong: rgba(255, 255, 255, 0.2);
+  --canvas-soft: rgba(255, 255, 255, 0.04);
+  --canvas-soft-2: rgba(255, 255, 255, 0.08);
+  --link: #a5d6ff;
+
+  background: #000000;
+  color: var(--ink);
 }
-.section-dark .body-lg { color: var(--mute); }
+
+[data-theme="dark"] .section-dark {
+  background: #111111; /* Deep charcoal in dark mode */
+}
 
 .section-header {
   margin-bottom: var(--space-3xl);
@@ -500,7 +514,6 @@ img, svg {
   color: var(--mute);
   margin-bottom: var(--space-md);
 }
-.section-dark .section-eyebrow { color: var(--hairline-strong); }
 
 /* ----------------------------------------------------------------
    Feature grid
@@ -630,24 +643,37 @@ img, svg {
   color: var(--link);
 }
 .code-block {
-  background: var(--ink);
+  /* Enforce dark context */
+  --ink: #ffffff;
+  --mute: rgba(255, 255, 255, 0.45);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --link: #a5d6ff;
+  --success: #bcf0b0;
+
+  background: #000000;
   border-radius: var(--r-md);
   padding: var(--space-md);
   overflow: hidden;
   max-width: 100%;
+  border: 1px solid var(--hairline);
 }
+
+[data-theme="dark"] .code-block {
+  background: #111111; /* Deep charcoal */
+}
+
 .code-block pre {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   line-height: 18px;
-  color: rgba(255,255,255,0.85);
+  color: var(--ink);
   white-space: pre-wrap;
   word-break: break-all;
   overflow: hidden;
 }
-.code-block .code-key { color: #a5d6ff; }
-.code-block .code-val { color: #bcf0b0; }
-.code-block .code-comment { color: rgba(255,255,255,0.35); }
+.code-block .code-key { color: var(--link); }
+.code-block .code-val { color: var(--success); }
+.code-block .code-comment { color: var(--mute); }
 
 /* ----------------------------------------------------------------
    MCP docs dark band
@@ -659,8 +685,8 @@ img, svg {
   margin-top: var(--space-3xl);
 }
 .mcp-step-card {
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: var(--canvas-soft);
+  border: 1px solid var(--hairline);
   border-radius: var(--r-md);
   padding: var(--space-xl);
   display: flex;
@@ -670,33 +696,34 @@ img, svg {
 .mcp-step-num {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
-  color: rgba(255,255,255,0.3);
+  color: var(--mute);
   letter-spacing: 0.06em;
   margin-bottom: var(--space-xs);
 }
 .mcp-step-card h3 {
   font-size: 16px;
   font-weight: 600;
-  color: rgba(255,255,255,0.9);
+  color: var(--ink);
   letter-spacing: -0.3px;
 }
 .mcp-step-card p {
   font-size: 13px;
-  color: rgba(255,255,255,0.5);
+  color: var(--body);
   line-height: 20px;
 }
 .mcp-code {
-  background: rgba(255,255,255,0.06);
+  background: var(--canvas-soft-2);
   border-radius: var(--r-sm);
   padding: var(--space-sm) var(--space-md);
   margin-top: var(--space-sm);
   overflow: hidden;
+  border: 1px solid var(--hairline);
 }
 .mcp-code pre {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   line-height: 18px;
-  color: rgba(255,255,255,0.75);
+  color: var(--ink);
   white-space: pre-wrap;
   word-break: break-all;
   overflow: hidden;
@@ -714,21 +741,21 @@ img, svg {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   font-weight: 400;
-  color: rgba(255,255,255,0.35);
+  color: var(--mute);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid var(--hairline);
 }
 .methods-table td {
   padding: var(--space-sm);
   font-size: 13px;
-  color: rgba(255,255,255,0.7);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  color: var(--body);
+  border-bottom: 1px solid var(--hairline);
   vertical-align: top;
 }
 .methods-table td:first-child {
   font-family: 'JetBrains Mono', monospace;
-  color: #a5d6ff;
+  color: var(--link);
   font-size: 12px;
 }
 .methods-table tr:last-child td { border-bottom: none; }
@@ -749,10 +776,21 @@ img, svg {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) var(--canvas);
+}
+.dashboard-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+.dashboard-sidebar::-webkit-scrollbar-track {
+  background: var(--canvas);
+}
+.dashboard-sidebar::-webkit-scrollbar-thumb {
+  background-color: var(--hairline-strong);
+  border-radius: var(--r-full);
 }
 .sidebar-header {
-  padding: var(--space-lg) var(--space-md);
-  border-bottom: 1px solid var(--hairline);
+  padding: var(--space-lg) var(--space-md) var(--space-sm) var(--space-md);
 }
 .sidebar-label {
   font-family: 'JetBrains Mono', monospace;
@@ -783,7 +821,11 @@ img, svg {
 .account-item:hover { background: var(--canvas-soft-2); }
 .account-item.selected {
   background: var(--canvas-soft-2);
-  box-shadow: inset 3px 0 0 var(--ink);
+  border-left: 2px solid var(--ink);
+  padding-left: calc(var(--space-sm) - 2px);
+}
+.account-item.selected .account-item-name {
+  font-weight: 600;
 }
 .account-item-name {
   font-size: 13px;
@@ -1090,6 +1132,27 @@ img, svg {
   width: 100%;
   height: 1px;
   background: var(--hairline);
+}
+
+/* ----------------------------------------------------------------
+   Form Elements
+   ---------------------------------------------------------------- */
+.input-field {
+  appearance: none;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  color: var(--ink);
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+.input-field:focus {
+  border-color: var(--hairline-strong);
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+}
+.input-field::placeholder {
+  color: var(--mute);
 }
 
 /* ----------------------------------------------------------------

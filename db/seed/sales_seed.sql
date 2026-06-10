@@ -42,10 +42,10 @@ ON CONFLICT (id) DO NOTHING;
 -- -------------------------------------------------------------
 -- Seed: cache_accounts (Supabase Salesforce snapshot)
 -- -------------------------------------------------------------
-INSERT INTO cache_accounts (sf_id, name, tier, mrr_cents, health_score, owner, industry, cached_at) VALUES
-  ('001ACME000000001', 'ACME Corporation',         'Enterprise',  625000, 87.5, 'Jane Smith',    'Manufacturing',      '2025-01-01 00:00:00+00'),
-  ('001BETA000000002', 'Beta Technologies Inc.',   'Mid-Market',  145000, 72.0, 'Bob Johnson',   'Software',           '2025-01-01 00:00:00+00'),
-  ('001GAMA000000003', 'Gamma Retail Group',       'SMB',          42000, 55.3, 'Carol Williams','Retail',             '2025-01-01 00:00:00+00'),
-  ('001DELT000000004', 'Delta Financial Services', 'Enterprise', 1200000, 94.1, 'Alice Chen',    'Financial Services', '2025-01-01 00:00:00+00'),
-  ('001EPSI000000005', 'Epsilon Healthcare',       'Mid-Market',  380000, 68.7, 'David Lee',     'Healthcare',         '2025-01-01 00:00:00+00')
+INSERT INTO cache_accounts (sf_id, name, tier, mrr_cents, health_score, owner, industry, tickets, cached_at) VALUES
+  ('001ACME000000001', 'ACME Corporation',         'Enterprise',  625000, 87.5, 'Jane Smith',    'Manufacturing',      '[]'::jsonb, '2025-01-01 00:00:00+00'),
+  ('001BETA000000002', 'Beta Technologies Inc.',   'Mid-Market',  145000, 72.0, 'Bob Johnson',   'Software',           '[]'::jsonb, '2025-01-01 00:00:00+00'),
+  ('001GAMA000000003', 'Gamma Retail Group',       'SMB',          42000, 55.3, 'Carol Williams','Retail',             '[]'::jsonb, '2025-01-01 00:00:00+00'),
+  ('001DELT000000004', 'Delta Financial Services', 'Enterprise', 1200000, 94.1, 'Alice Chen',    'Financial Services', '[]'::jsonb, '2025-01-01 00:00:00+00'),
+  ('001EPSI000000005', 'Epsilon Healthcare',       'Mid-Market',  380000, 68.7, 'David Lee',     'Healthcare',         '[]'::jsonb, '2025-01-01 00:00:00+00')
 ON CONFLICT (sf_id) DO NOTHING;

@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/ia-06/project-1-enterprise-mcp-hub/mcp-server/internal/adapters"
@@ -205,6 +206,16 @@ func handleSingleRPC(
 		result, rpcErr = handleHealthCheck(ctx, mcpServer)
 	case "system.customer360":
 		result, rpcErr = handleSystemCustomer360(ctx, mcpServer, req.Params)
+	case "system.customer360Batch":
+		result, rpcErr = handleSystemCustomer360Batch(ctx, mcpServer, req.Params)
+	case "system.getAccountInsights":
+		result, rpcErr = handleSystemGetAccountInsights(ctx, mcpServer, req.Params)
+	case "jira.getAccountTicketTrends":
+		result, rpcErr = handleJiraGetAccountTicketTrends(ctx, mcpServer, req.Params)
+	case "jira.escalateTicket":
+		result, rpcErr = handleJiraEscalateTicket(ctx, mcpServer, req.Params)
+	case "system.adjustApiRateLimit":
+		result, rpcErr = handleSystemAdjustApiRateLimit(ctx, mcpServer, req.Params)
 	case "sales.listOrders":
 		result, rpcErr = handleSalesListOrders(ctx, mcpServer, req.Params)
 	case "sales.getCustomerSummary":
@@ -215,6 +226,8 @@ func handleSingleRPC(
 		result, rpcErr = handleSalesforceGetAccount(ctx, mcpServer, req.Params)
 	case "salesforce.listAccounts":
 		result, rpcErr = handleSalesforceListAccounts(ctx, mcpServer, req.Params)
+	case "salesforce.searchAccounts":
+		result, rpcErr = handleSalesforceSearchAccounts(ctx, mcpServer, req.Params)
 	default:
 		rpcErr = &rpcError{
 			Code:    errCodeMethodNotFound,
@@ -321,18 +334,120 @@ func handleSalesforceListAccounts(ctx context.Context, s *internalmcp.Server, pa
 	return fiber.Map{"accounts": accounts}, nil
 }
 
+func handleSalesforceSearchAccounts(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		Query string `json:"query"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params", Data: fiber.Map{"detail": err.Error()}}
+		}
+	}
+	accounts, err := s.SalesforceSearchAccounts(ctx, p.Query)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeSalesforceUnavailable, "Salesforce data source unavailable")
+	}
+	return fiber.Map{"accounts": accounts}, nil
+}
+
 func handleSystemCustomer360(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
 	var p struct {
 		AccountID string `json:"accountId"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params", Data: fiber.Map{"detail": err.Error()}}
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	if p.AccountID == "" {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "accountId is required"}
 	}
 	c360, err := s.SystemCustomer360(ctx, p.AccountID)
 	if err != nil {
 		return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 data")
 	}
 	return c360, nil
+}
+
+func handleSystemCustomer360Batch(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		AccountIDs string `json:"accountIds"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	if p.AccountIDs == "" {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "accountIds is required"}
+	}
+	ids := strings.Split(p.AccountIDs, ",")
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+	c360Batch, err := s.SystemCustomer360Batch(ctx, ids)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to aggregate Customer 360 Batch data")
+	}
+	return fiber.Map{"accounts": c360Batch}, nil
+}
+
+func handleSystemGetAccountInsights(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	insights, err := s.SystemGetAccountInsights(ctx, p.AccountID)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to get insights")
+	}
+	return fiber.Map{"insights": insights}, nil
+}
+
+func handleJiraGetAccountTicketTrends(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	trends, err := s.JiraGetAccountTicketTrends(ctx, p.AccountID)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to get trends")
+	}
+	return fiber.Map{"trends": trends}, nil
+}
+
+func handleJiraEscalateTicket(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		TicketKey   string `json:"ticketKey"`
+		NewPriority string `json:"newPriority"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	// For JSON-RPC, the adapter handles this directly. Since Server holds adapters, we need a method on Server.
+	// Wait, we didn't add EscalateTicket to Server struct! Let's do that in a separate chunk.
+	// Actually, I can just use s.MCPServer()... but wait, JSON-RPC handler expects to call Server directly, not via MCP tools.
+	// We'll assume I will add JiraEscalateTicket and SystemAdjustApiRateLimit to Server.
+	err := s.JiraEscalateTicket(ctx, p.TicketKey, p.NewPriority)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to escalate ticket")
+	}
+	return fiber.Map{"status": "success"}, nil
+}
+
+func handleSystemAdjustApiRateLimit(ctx context.Context, s *internalmcp.Server, params json.RawMessage) (interface{}, *rpcError) {
+	var p struct {
+		AccountID string `json:"accountId"`
+		NewLimit  int    `json:"newLimit"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &rpcError{Code: errCodeInvalidParams, Message: "Invalid params"}
+	}
+	err := s.SystemAdjustApiRateLimit(ctx, p.AccountID, p.NewLimit)
+	if err != nil {
+		return nil, mapAdapterError(err, errCodeInternal, "Failed to adjust API rate limit")
+	}
+	return fiber.Map{"status": "success"}, nil
 }
 
 // ---------------------------------------------------------------------------

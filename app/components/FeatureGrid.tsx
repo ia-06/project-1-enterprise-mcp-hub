@@ -8,8 +8,8 @@ const FEATURES = [
     name: "Jira Cloud",
     tag: "REST API v3",
     description:
-      "Live engineering tickets fetched via Jira Cloud REST API v3 with HTTP Basic Auth. Tickets are dynamically filtered by Salesforce Account ID using an auto-resolved JQL custom field — no hardcoded IDs.",
-    detail: "jira.listTicketsByAccount",
+      "Live engineering tickets fetched via Jira Cloud REST API v3 with HTTP Basic Auth. Tickets are dynamically filtered by Salesforce Account ID using an auto-resolved JQL custom field — no hardcoded IDs. Action tools allow AI to escalate critical tickets instantly.",
+    detail: "jira.listTicketsByAccount & jira.escalateTicket",
   },
   {
     icon: (
@@ -20,8 +20,8 @@ const FEATURES = [
     name: "Salesforce CRM",
     tag: "OAuth2 ROPC",
     description:
-      "Real-time Account data via OAuth2 Resource Owner Password Credentials flow. Automatic Supabase cache fallback activates when Salesforce exceeds the request timeout — Scenario A resilience built in.",
-    detail: "salesforce.getAccount",
+      "Real-time Account data via OAuth2 flow. Features a Graceful Resilience Degradation Matrix: deep metrics are computed and asynchronously upserted to Supabase in the background, which serves as a zero-latency fallback if Salesforce exceeds request timeouts or goes down. Highly optimized batch operations prevent N+1 API exhaustion.",
+    detail: "salesforce.getAccount, salesforce.searchAccounts & system.customer360Batch",
   },
   {
     icon: (
@@ -32,8 +32,8 @@ const FEATURES = [
     name: "Postgres / Supabase",
     tag: "PostgREST",
     description:
-      "Direct Supabase PostgREST queries for customers, sales orders, and pipeline aggregates. Uses the new publishable key system (sb_publishable_…). Doubles as the Salesforce fallback cache layer.",
-    detail: "sales.listOrders",
+      "Direct Supabase PostgREST queries for customers, sales orders, pipeline aggregates, and dynamic API rate limit adjustments. Uses the new publishable key system (sb_publishable_…). Doubles as the self-healing background cache layer for Salesforce data.",
+    detail: "sales.listOrders & system.adjustApiRateLimit",
   },
 ];
 

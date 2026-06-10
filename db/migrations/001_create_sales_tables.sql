@@ -55,5 +55,6 @@ CREATE TABLE IF NOT EXISTS cache_accounts (
   health_score   NUMERIC(5,2) NOT NULL DEFAULT 0,
   owner          TEXT,
   industry       TEXT,
+  tickets        JSONB       NOT NULL DEFAULT '[]'::jsonb,
   cached_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

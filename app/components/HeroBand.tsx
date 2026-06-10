@@ -55,7 +55,7 @@ export default function HeroBand() {
       >
         {[
           { value: "3",        label: "Live Data Channels" },
-          { value: "5",        label: "JSON-RPC Methods" },
+          { value: "13",       label: "MCP Skills" },
           { value: "< 50ms",   label: "Median Response" },
           { value: "99.9%",    label: "Uptime Target" },
         ].map((s) => (

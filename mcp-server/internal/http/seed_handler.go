@@ -23,4 +23,14 @@ func RegisterSeedRoute(app *fiber.App, sf *adapters.SalesforceAdapter, jira *ada
 			"message": "Seeding process started in the background. Please wait a few moments.",
 		})
 	})
+	app.Get("/api/seed/status", func(c fiber.Ctx) error {
+		seeder.GlobalSeedProgress.Mu.Lock()
+		defer seeder.GlobalSeedProgress.Mu.Unlock()
+		return c.JSON(fiber.Map{
+			"totalAccounts":     seeder.GlobalSeedProgress.TotalAccounts,
+			"completedAccounts": seeder.GlobalSeedProgress.CompletedAccounts,
+			"isComplete":        seeder.GlobalSeedProgress.IsComplete,
+			"logs":              seeder.GlobalSeedProgress.Logs,
+		})
+	})
 }

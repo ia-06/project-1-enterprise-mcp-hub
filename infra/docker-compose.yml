@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ---------------------------------------------------------------
   # PostgreSQL: local development database
@@ -22,7 +20,7 @@ services:
       - ../db/migrations/001_create_sales_tables.sql:/docker-entrypoint-initdb.d/001_create_sales_tables.sql:ro
       - ../db/seed/sales_seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d mcp_hub"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d mcp_hub" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -56,7 +54,7 @@ services:
     container_name: mcp_hub_pgadmin
     restart: unless-stopped
     profiles:
-      - tools                # Only started with: docker compose --profile tools up
+      - tools # Only started with: docker compose --profile tools up
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@mcp-hub.dev
       PGADMIN_DEFAULT_PASSWORD: admin

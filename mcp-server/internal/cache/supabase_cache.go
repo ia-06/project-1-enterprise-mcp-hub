@@ -16,6 +16,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,7 @@ var ErrCacheMiss = errors.New("account not found in supabase cache")
 // AccountCache defines read-only operations on the Supabase account cache.
 type AccountCache interface {
 	GetAccount(ctx context.Context, sfID string) (*domain.Account, error)
+	UpsertAccount(ctx context.Context, acc *domain.Account) error
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +95,7 @@ func (c *supabaseAccountCache) GetAccount(ctx context.Context, sfID string) (*do
 
 	// PostgREST filter: exact match on the sf_id column.
 	endpoint := fmt.Sprintf(
-		"%s/rest/v1/cache_accounts?sf_id=eq.%s&select=sf_id,name,tier,mrr_cents,health_score,owner,industry",
+		"%s/rest/v1/cache_accounts?sf_id=eq.%s&select=sf_id,name,tier,mrr_cents,health_score,owner,industry,tickets",
 		c.cfg.SupabaseURL,
 		sfID,
 	)
@@ -147,9 +149,67 @@ func (c *supabaseAccountCache) GetAccount(ctx context.Context, sfID string) (*do
 		HealthScore: row.HealthScore,
 		Owner:       row.Owner,
 		Industry:    row.Industry,
+		Tickets:     row.Tickets,
 		// Source is intentionally blank here; the caller (SalesforceAdapter)
 		// sets it to "cache" so the UI renders the correct resilience badge.
 	}, nil
+}
+
+// UpsertAccount writes the account into the Supabase cache via PostgREST.
+func (c *supabaseAccountCache) UpsertAccount(ctx context.Context, acc *domain.Account) error {
+	if !c.cfg.SupabaseEnabled {
+		return ErrCacheDisabled
+	}
+	
+	// We prefer the secret key for writes, fallback to publishable if missing (might fail if RLS blocks it)
+	key := c.cfg.SupabaseSecretKey
+	if key == "" {
+		key = c.cfg.SupabasePublishableKey
+	}
+	if c.cfg.SupabaseURL == "" || key == "" {
+		return ErrCacheDisabled
+	}
+
+	endpoint := fmt.Sprintf("%s/rest/v1/cache_accounts", c.cfg.SupabaseURL)
+
+	row := supabaseCacheRow{
+		SFID:        acc.ID,
+		Name:        acc.Name,
+		Tier:        acc.Tier,
+		MRRCents:    acc.MRRCents,
+		HealthScore: acc.HealthScore,
+		Owner:       acc.Owner,
+		Industry:    acc.Industry,
+		Tickets:     acc.Tickets,
+	}
+
+	payload, err := json.Marshal(row)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("apikey", key)
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Prefer", "resolution=merge-duplicates") // Upsert
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("supabase upsert failed HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -160,8 +220,9 @@ type supabaseCacheRow struct {
 	SFID        string  `json:"sf_id"`
 	Name        string  `json:"name"`
 	Tier        string  `json:"tier"`
-	MRRCents    int64   `json:"mrr_cents"`
-	HealthScore float64 `json:"health_score"`
-	Owner       string  `json:"owner"`
-	Industry    string  `json:"industry"`
+	MRRCents    int64                `json:"mrr_cents"`
+	HealthScore float64              `json:"health_score"`
+	Owner       string               `json:"owner"`
+	Industry    string               `json:"industry"`
+	Tickets     []domain.CacheTicket `json:"tickets"`
 }

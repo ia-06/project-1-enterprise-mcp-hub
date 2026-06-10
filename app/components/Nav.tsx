@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "./ThemeToggle";
 
 const LINKS = [
   { label: "Features", href: "/#features" },
@@ -50,6 +51,7 @@ export default function Nav() {
           <Link href="/dashboard" className="btn btn-nav btn-nav-primary">
             Open Dashboard
           </Link>
+          <ThemeToggle />
         </div>
       </div>
     </nav>

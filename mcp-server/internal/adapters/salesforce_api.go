@@ -136,6 +136,104 @@ func (a *SalesforceAdapter) ListAccounts(ctx context.Context, limit int) ([]doma
 	return a.liveListAccounts(ctx, limit)
 }
 
+// ListAccountsByIDs fetches multiple Salesforce Accounts efficiently using a single bulk SOQL query.
+func (a *SalesforceAdapter) ListAccountsByIDs(ctx context.Context, accountIDs []string) ([]domain.Account, error) {
+	if len(accountIDs) == 0 {
+		return []domain.Account{}, nil
+	}
+	if a.cfg.SfUseMock {
+		return []domain.Account{}, nil
+	}
+	
+	// Create quoted list of IDs for SOQL IN clause
+	quotedIDs := make([]string, len(accountIDs))
+	for i, id := range accountIDs {
+		quotedIDs[i] = fmt.Sprintf("'%s'", id)
+	}
+	idList := strings.Join(quotedIDs, ",")
+
+	query := fmt.Sprintf("SELECT Id,Name,Type,AnnualRevenue,Industry,OwnerId FROM Account WHERE Id IN (%s)", idList)
+	
+	accessToken, instanceURL, err := a.ensureToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: token acquisition failed: %w", err)
+	}
+
+	endpoint := fmt.Sprintf(
+		"%s/services/data/%s/query/?q=%s",
+		strings.TrimRight(instanceURL, "/"),
+		a.cfg.SfAPIVersion,
+		url.QueryEscape(query),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: build query request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("salesforce: API error HTTP %d — %s", resp.StatusCode, string(body))
+	}
+
+	var soqlResp struct {
+		Records []sfAccountResponse `json:"records"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&soqlResp); err != nil {
+		return nil, fmt.Errorf("salesforce: unmarshal SOQL response: %w", err)
+	}
+
+	accounts := make([]domain.Account, 0, len(soqlResp.Records))
+	for _, rec := range soqlResp.Records {
+		accounts = append(accounts, domain.Account{
+			ID:          rec.ID,
+			Name:        rec.Name,
+			Tier:        rec.Type,
+			MRRCents:    0,
+			HealthScore: 85.00,
+			Owner:       rec.OwnerID,
+			Industry:    rec.Industry,
+			Source:      "live",
+		})
+	}
+
+	// Trigger background cache upsert for all fetched accounts
+	go func(accs []domain.Account) {
+		for _, acc := range accs {
+			accCopy := acc // capture value
+			_ = a.cache.UpsertAccount(context.Background(), &accCopy)
+		}
+	}(accounts)
+
+	return accounts, nil
+}
+
+// SearchAccounts returns Salesforce Account records matching a query by Name.
+func (a *SalesforceAdapter) SearchAccounts(ctx context.Context, query string) ([]domain.Account, error) {
+	if a.cfg.SfUseMock {
+		return []domain.Account{}, nil
+	}
+	return a.liveSearchAccounts(ctx, query)
+}
+
+// CacheAccount triggers a manual background upsert to the Supabase fallback cache.
+// This should be called by the service layer ONLY AFTER deep metrics (MRR, HealthScore)
+// have been dynamically computed, ensuring the cache mirrors true business state.
+func (a *SalesforceAdapter) CacheAccount(ctx context.Context, acc *domain.Account) {
+	// use a disconnected context since the parent HTTP context might cancel quickly
+	go func(aToCache *domain.Account) {
+		_ = a.cache.UpsertAccount(context.Background(), aToCache)
+	}(acc)
+}
+
 // ---------------------------------------------------------------------------
 // OAuth2 ROPC token flow
 // ---------------------------------------------------------------------------
@@ -365,6 +463,69 @@ func (a *SalesforceAdapter) liveListAccounts(ctx context.Context, limit int) ([]
 			Owner:       rec.OwnerID,
 			MRRCents:    annualRevenue / 12, // approximate monthly from annual
 			HealthScore: 85.0,               // default score; full detail available via getAccount
+			Source:      "live",
+		})
+	}
+	return accounts, nil
+}
+
+func (a *SalesforceAdapter) liveSearchAccounts(ctx context.Context, query string) ([]domain.Account, error) {
+	accessToken, instanceURL, err := a.ensureToken(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce: token acquisition failed: %w", err)
+	}
+
+	// SOQL query — include AnnualRevenue so MRR can be approximated for list view.
+	// We use LIKE '%query%' for search.
+	soql := fmt.Sprintf(
+		"SELECT Id,Name,Type,Industry,OwnerId,AnnualRevenue FROM Account WHERE Name LIKE '%%%s%%' ORDER BY Name ASC LIMIT 50",
+		query,
+	)
+	endpoint := fmt.Sprintf(
+		"%s/services/data/%s/query?q=%s",
+		strings.TrimRight(instanceURL, "/"),
+		a.cfg.SfAPIVersion,
+		url.QueryEscape(soql),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce searchAccounts: build request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce searchAccounts: HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("salesforce searchAccounts: read response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("salesforce searchAccounts: API error HTTP %d — %s", resp.StatusCode, string(body))
+	}
+
+	var queryResp sfQueryResponse
+	if err := json.Unmarshal(body, &queryResp); err != nil {
+		return nil, fmt.Errorf("salesforce searchAccounts: unmarshal response: %w", err)
+	}
+
+	accounts := make([]domain.Account, 0, len(queryResp.Records))
+	for _, rec := range queryResp.Records {
+		annualRevenue, _ := rec.AnnualRevenue.Int64()
+		accounts = append(accounts, domain.Account{
+			ID:          rec.ID,
+			Name:        rec.Name,
+			Tier:        rec.Type,
+			Industry:    rec.Industry,
+			Owner:       rec.OwnerID,
+			MRRCents:    annualRevenue / 12,
+			HealthScore: 85.0,
 			Source:      "live",
 		})
 	}

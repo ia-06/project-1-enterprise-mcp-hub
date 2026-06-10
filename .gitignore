@@ -58,9 +58,17 @@ coverage/
 *.out
 
 # ===========================
+# AI Artifacts
+# ===========================
+task.md
+implementation_plan.md
+walkthrough.md
+
+# ===========================
 # Misc
 # ===========================
 *.log
 tmp/
 .cache/
-DESIGN.md
+mcp-server/server
+MYTODO.md
