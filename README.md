@@ -8,23 +8,23 @@ The backend simultaneously serves a React frontend and a JSON-RPC 2.0 MCP interf
 
 ```mermaid
 flowchart TD
-    Agent[AI Agent (Claude/Cursor)]
-    UI[Next.js App Router UI]
+    Agent["AI Agent (Claude/Cursor)"]
+    UI["Next.js App Router UI"]
 
     subgraph Enterprise MCP Hub (Go Middleware)
         direction TB
-        RPC[JSON-RPC 2.0 Router]
-        MCP[MCP Interface Layer]
+        RPC["JSON-RPC 2.0 Router"]
+        MCP["MCP Interface Layer"]
         
         subgraph Concurrency Engine
-            Batch[Batch Orchestrator]
-            Metrics[Metrics & Insights Engine]
+            Batch["Batch Orchestrator"]
+            Metrics["Metrics & Insights Engine"]
         end
 
         subgraph Adapters
-            AdapterSF[Salesforce API Adapter]
-            AdapterJira[Jira REST Adapter]
-            RepoSales[Postgres/Supabase Repository]
+            AdapterSF["Salesforce API Adapter"]
+            AdapterJira["Jira REST Adapter"]
+            RepoSales["Postgres/Supabase Repository"]
         end
         
         RPC <--> MCP
@@ -35,9 +35,9 @@ flowchart TD
         Metrics <--> RepoSales
     end
 
-    LiveSF[(Live Salesforce CRM)]
-    LiveJira[(Live Jira Cloud)]
-    Supabase[(Supabase Cache / DB)]
+    LiveSF[("Live Salesforce CRM")]
+    LiveJira[("Live Jira Cloud")]
+    Supabase[("Supabase Cache / DB")]
 
     UI <-->|HTTP / API| RPC
     Agent <-->|Stdio / HTTP JSON-RPC| RPC
