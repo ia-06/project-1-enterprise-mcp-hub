@@ -7,6 +7,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 
@@ -564,6 +565,98 @@ func handleMCPToolsList() (interface{}, *rpcError) {
 					"properties": fiber.Map{},
 				},
 			},
+			{
+				"name":        "salesforce_searchAccounts",
+				"description": "Search Salesforce Accounts by name. Returns up to 50 matching records.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"query": fiber.Map{
+							"type":        "string",
+							"description": "The search query string (e.g. 'Acme').",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+			{
+				"name":        "system_getAccountInsights",
+				"description": "Analyzes ticket-to-order ratio, broken ticket percentage, and MRR, and returns a plain English string detailing why the account is failing and recommended actions.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account.Id (e.g. '001ACME000000001').",
+						},
+					},
+					"required": []string{"accountId"},
+				},
+			},
+			{
+				"name":        "jira_getAccountTicketTrends",
+				"description": "Analyzes open tickets and summarizes the primary issue categories for a given account.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account.Id (e.g. '001ACME000000001').",
+						},
+					},
+					"required": []string{"accountId"},
+				},
+			},
+			{
+				"name":        "jira_escalateTicket",
+				"description": "Updates a Jira issue's priority via the Atlassian REST API and adds an escalation comment.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"ticketKey": fiber.Map{
+							"type":        "string",
+							"description": "The Jira issue key (e.g. 'ENG-123').",
+						},
+						"newPriority": fiber.Map{
+							"type":        "string",
+							"description": "The new priority level (e.g. 'Highest', 'High', 'Medium', 'Low', 'Lowest').",
+						},
+					},
+					"required": []string{"ticketKey", "newPriority"},
+				},
+			},
+			{
+				"name":        "system_adjustApiRateLimit",
+				"description": "Dynamically alters a client's API limits in the Postgres database via Supabase PostgREST.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountId": fiber.Map{
+							"type":        "string",
+							"description": "The Salesforce Account.Id (e.g. '001ACME000000001').",
+						},
+						"newLimit": fiber.Map{
+							"type":        "number",
+							"description": "The new API limit (e.g. 5000).",
+						},
+					},
+					"required": []string{"accountId", "newLimit"},
+				},
+			},
+			{
+				"name":        "system_customer360Batch",
+				"description": "Get a complete Customer 360 view for MULTIPLE accounts simultaneously. Highly optimized bulk API call to prevent N+1 query exhaustion.",
+				"inputSchema": fiber.Map{
+					"type": "object",
+					"properties": fiber.Map{
+						"accountIds": fiber.Map{
+							"type":        "string",
+							"description": "Comma-separated list of Salesforce Account IDs (e.g. '001ACME001,001ACME002').",
+						},
+					},
+					"required": []string{"accountIds"},
+				},
+			},
 		},
 	}, nil
 }
@@ -644,6 +737,73 @@ func handleMCPToolsCall(ctx context.Context, s *internalmcp.Server, params json.
 		res, err := s.HealthCheck(ctx)
 		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed health check") }
 		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "salesforce_searchAccounts" {
+		var args struct { Query string `json:"query"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.SalesforceSearchAccounts(ctx, args.Query)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to search Salesforce accounts") }
+		b, _ := json.Marshal(res)
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "system_getAccountInsights" {
+		var args struct { AccountID string `json:"accountId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.SystemGetAccountInsights(ctx, args.AccountID)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to get account insights") }
+		b, _ := json.Marshal(fiber.Map{"insights": res})
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "jira_getAccountTicketTrends" {
+		var args struct { AccountID string `json:"accountId"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		res, err := s.JiraGetAccountTicketTrends(ctx, args.AccountID)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to get ticket trends") }
+		b, _ := json.Marshal(fiber.Map{"trends": res})
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "jira_escalateTicket" {
+		var args struct {
+			TicketKey   string `json:"ticketKey"`
+			NewPriority string `json:"newPriority"`
+		}
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		err := s.JiraEscalateTicket(ctx, args.TicketKey, args.NewPriority)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to escalate ticket") }
+		b, _ := json.Marshal(fiber.Map{"status": "success", "message": fmt.Sprintf("Ticket %s escalated to %s", args.TicketKey, args.NewPriority)})
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "system_adjustApiRateLimit" {
+		var args struct {
+			AccountID string `json:"accountId"`
+			NewLimit  int    `json:"newLimit"`
+		}
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		err := s.SystemAdjustApiRateLimit(ctx, args.AccountID, args.NewLimit)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to adjust API rate limit") }
+		b, _ := json.Marshal(fiber.Map{"status": "success", "message": fmt.Sprintf("API limit for account %s adjusted to %d", args.AccountID, args.NewLimit)})
+		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
+	}
+
+	if p.Name == "system_customer360Batch" {
+		var args struct { AccountIDs string `json:"accountIds"` }
+		if len(p.Arguments) > 0 { json.Unmarshal(p.Arguments, &args) }
+		
+		accountIDsRaw := args.AccountIDs
+		accountIDs := strings.Split(accountIDsRaw, ",")
+		for i := range accountIDs {
+			accountIDs[i] = strings.TrimSpace(accountIDs[i])
+		}
+
+		res, err := s.SystemCustomer360Batch(ctx, accountIDs)
+		if err != nil { return nil, mapAdapterError(err, errCodeInternal, "Failed to fetch Customer 360 batch") }
+		b, _ := json.Marshal(fiber.Map{"accounts": res})
 		return fiber.Map{ "content": []fiber.Map{{ "type": "text", "text": string(b) }} }, nil
 	}
 
