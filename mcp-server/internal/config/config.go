@@ -92,9 +92,14 @@ func Load() Config {
 
 	timeoutMS := getInt("GO_REQUEST_TIMEOUT_MS", 8000)
 
+	defaultAddr := ":8080"
+	if cloudPort := os.Getenv("PORT"); cloudPort != "" {
+		defaultAddr = ":" + cloudPort
+	}
+
 	cfg := Config{
 		// HTTP
-		HTTPAddr:       getStr("GO_HTTP_ADDR", ":8080"),
+		HTTPAddr:       getStr("GO_HTTP_ADDR", defaultAddr),
 		GoEnv:          getStr("GO_ENV", "development"),
 		RequestTimeout: time.Duration(timeoutMS) * time.Millisecond,
 
